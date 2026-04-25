@@ -1,4 +1,6 @@
-# NAO Interview Coach
+# 2026UX-NAO
+
+## NAO Interview Coach
 
 用于高压模拟面试研究的人机交互项目仓库。
 
@@ -29,7 +31,7 @@ C:\Users\13807\miniconda3\python.exe run_client_demo.py --verbose
 ### 2.2 启用 DeepSeek
 
 ```powershell
-$env:DEEPSEEK_API_KEY="sk-768a6e0f68494b5f9ad551ae9c6398d2"
+$env:DEEPSEEK_API_KEY="你的DeepSeek_API_Key"
 ```
 
 ```bash
