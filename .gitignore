@@ -1,0 +1,22 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Local virtual env
+.venv27/
+
+# VS Code user-local settings (workspace-level files are kept)
+.vscode/
+
+# Secrets / local env files
+.env
+.env.*
+*.env
+
+# Runtime logs / artifacts
+logs/
+*.log
+
+# Local temporary assets (avoid accidental large uploads)
+proposal_tmp/
+*.zip
