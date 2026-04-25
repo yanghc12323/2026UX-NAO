@@ -1,7 +1,7 @@
 """基于 LLM 的面试问题/反馈提供器实现。
 
 该模块把 `session_flow.py` 中的协议接口落到具体实现：
-- `LLMQuestionProvider`：生成热身题、主问题、追问、结束语；
+- `LLMQuestionProvider`：生成热身题、任务引导、1分钟自我介绍提示、STAR 主问题、结束语；
 - `LLMFeedbackProvider`：基于回答生成反馈。
 
 注意：
@@ -24,7 +24,7 @@ from .prompt_templates import (
 class LLMQuestionProvider(object):
     """基于 LLM 的问题提供器。"""
 
-    def __init__(self, llm: LLMClient, policy: InterviewPolicy, main_count: int = 2):
+    def __init__(self, llm: LLMClient, policy: InterviewPolicy, main_count: int = 4):
         self.llm = llm
         self.policy = policy
         self.main_count = int(main_count)
@@ -33,10 +33,20 @@ class LLMQuestionProvider(object):
         fallback = "请你先做一个30秒的自我介绍。"
         return self._generate_single_line(stage="warmup", fallback=fallback)
 
+    def get_task_intro_words(self) -> str:
+        fallback = "接下来我们进行模拟面试：先听说明，再完成1分钟自我介绍，然后回答几道行为面试题。"
+        return self._generate_single_line(stage="task_intro", fallback=fallback)
+
+    def get_self_intro_prompt(self) -> str:
+        fallback = "请你用约1分钟做自我介绍，重点说明经历、优势和你期待的实习方向。"
+        return self._generate_single_line(stage="self_intro", fallback=fallback)
+
     def get_main_questions(self) -> List[str]:
         fallback = [
-            "请介绍一个你主导完成的项目，并说明你的关键贡献。",
-            "在高压任务中，你如何安排优先级并保证质量？",
+            "请用 STAR 结构介绍一个你主导推进并最终落地的项目经历。",
+            "请回忆一次团队协作冲突，你当时如何沟通并推动问题解决？",
+            "面对高压 deadline 时，你如何安排优先级并保证交付质量？",
+            "请分享一次你快速学习新技能并应用到任务中的经历。",
         ]
         text = self._ask_llm(stage="main")
         if not text:
@@ -51,12 +61,8 @@ class LLMQuestionProvider(object):
             result.extend(fallback[len(result) : self.main_count])
         return result
 
-    def get_followup_prompt(self) -> str:
-        fallback = "如果给你一次重来的机会，你会如何优化刚才的回答？"
-        return self._generate_single_line(stage="followup", fallback=fallback)
-
     def get_closing_words(self) -> str:
-        fallback = "今天的模拟面试到这里，感谢你的参与。"
+        fallback = "今天的模拟面试到这里，感谢你的参与。请继续完成问卷，帮助我们改进系统。"
         return self._generate_single_line(stage="closing", fallback=fallback)
 
     def _generate_single_line(self, stage: str, fallback: str) -> str:

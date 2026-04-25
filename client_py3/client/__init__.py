@@ -18,6 +18,19 @@ from .session_flow import InterviewSessionRunner, QuestionProvider, FeedbackProv
 from .interview_policy import InterviewPolicy
 from .llm_provider import LLMClient, LLMConfig
 from .llm_interview_provider import LLMQuestionProvider, LLMFeedbackProvider
+from .input_provider import (
+    UserInputSample,
+    ASRProvider,
+    SessionInputProvider,
+    MockInputProvider,
+    ASRFirstInputProvider,
+    JsonlASRProvider,
+    RealtimeASRProvider,
+)
+from .gaze_provider import GazeProvider, MockGazeProvider, JsonlGazeProvider, RealtimeGazeProvider
+from .realtime_bridge import RealtimeStreamBridge
+from .experiment_logger import ExperimentLogger
+from .metrics import compute_speech_rate_cpm, compute_disfluency_ratio, compute_gaze_contact_ratio
 
 __all__ = [
     "ClientConfig",
@@ -36,4 +49,20 @@ __all__ = [
     "LLMConfig",
     "LLMQuestionProvider",
     "LLMFeedbackProvider",
+    "UserInputSample",
+    "ASRProvider",
+    "SessionInputProvider",
+    "MockInputProvider",
+    "ASRFirstInputProvider",
+    "JsonlASRProvider",
+    "RealtimeASRProvider",
+    "GazeProvider",
+    "MockGazeProvider",
+    "JsonlGazeProvider",
+    "RealtimeGazeProvider",
+    "RealtimeStreamBridge",
+    "ExperimentLogger",
+    "compute_speech_rate_cpm",
+    "compute_disfluency_ratio",
+    "compute_gaze_contact_ratio",
 ]

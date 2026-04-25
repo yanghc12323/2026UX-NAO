@@ -20,3 +20,11 @@ logs/
 # Local temporary assets (avoid accidental large uploads)
 proposal_tmp/
 *.zip
+
+# NAO SDK (large binary files, should be installed locally)
+pynaoqi-*/
+naoqi-sdk-*/
+
+# Data files (experiment data should not be committed)
+client_py3/data/*.jsonl
+client_py3/logs/

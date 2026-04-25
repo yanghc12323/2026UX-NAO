@@ -35,16 +35,18 @@ def build_feedback_system_prompt(policy: InterviewPolicy) -> str:
     )
 
 
-def build_question_user_prompt(stage: str, main_count: int = 2) -> str:
+def build_question_user_prompt(stage: str, main_count: int = 4) -> str:
     """构造题目阶段用户提示词。"""
     if stage == "warmup":
         return "请生成1条热身问题，用于让本科生实习候选人快速进入状态。"
+    if stage == "task_intro":
+        return "请生成1段任务引导词，介绍模拟面试目的、流程、时长与作答建议。"
+    if stage == "self_intro":
+        return "请生成1条引导语，要求候选人进行1分钟自我介绍，用于后续问题个性化。"
     if stage == "main":
-        return "请生成%d条正式面试问题，聚焦企业实习常见能力（项目、协作、抗压、学习能力）。" % int(main_count)
-    if stage == "followup":
-        return "请生成1条追问提示，引导候选人复盘并优化上一轮回答。"
+        return "请生成%d条 STAR 风格行为面试问题，覆盖项目经历、协作冲突、高压应对、学习成长。" % int(main_count)
     if stage == "closing":
-        return "请生成1句结束语，礼貌结束面试并鼓励后续改进。"
+        return "请生成1句结束语，礼貌结束面试并引导参与者完成问卷。"
     return "请生成1条适合面试流程的中文引导语。"
 
 

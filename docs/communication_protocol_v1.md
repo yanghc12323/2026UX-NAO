@@ -323,3 +323,64 @@ Client 与 Server 均需记录：
   - `speak` 指令响应（接收确认）< 300ms
   - `nod/gaze` 执行完成 < 2000ms
 - 所有错误均可映射到标准错误码。
+
+---
+
+## 11. 面向实验流程的扩展建议（v1.1 草案）
+
+> 说明：以下内容是对你们当前实验目标的协议层补充建议，便于 Python3 与 Python2 对齐实现。
+
+### 11.1 阶段事件（建议由 Python3 记录）
+
+建议在会话日志中新增 `stage_event`，用于标记阶段切换：
+
+```json
+{
+  "event_type": "stage_event",
+  "session_id": "S20260425_001",
+  "stage": "warmup",
+  "phase": "enter",
+  "timestamp_ms": 1777085400123,
+  "meta": {
+    "persona_mode": "neutral",
+    "objective": "baseline_collection"
+  }
+}
+```
+
+建议阶段枚举：
+- `warmup`（中立）
+- `task_intro`
+- `formal_interview`
+- `closing_and_questionnaire`
+
+### 11.2 指标上报（建议由 Python3 聚合）
+
+建议增加 `metric_event` 日志记录（而非作为机器人命令发送）：
+
+```json
+{
+  "event_type": "metric_event",
+  "session_id": "S20260425_001",
+  "turn_id": "T007",
+  "stage": "formal_interview",
+  "metrics": {
+    "speech_rate_cpm": 238.5,
+    "disfluency_ratio": 0.034,
+    "gaze_contact_ratio": 0.62
+  },
+  "timestamp_ms": 1777085432123
+}
+```
+
+定义建议：
+- `speech_rate_cpm`：每分钟汉字数（char/min）
+- `disfluency_ratio`：停顿词总次数 / 总字数
+- `gaze_contact_ratio`：看向机器人头部时长 / 总回答时长
+
+### 11.3 组件分工（与协议实现相关）
+
+- Python3：阶段状态机、ASR/视觉处理、指标计算、事件日志。
+- Python2：`/command` 执行层（TTS/动作）与错误码返回。
+
+该分工可保持协议稳定，避免 Python2 服务端承担重分析任务。
