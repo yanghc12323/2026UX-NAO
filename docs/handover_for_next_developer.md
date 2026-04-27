@@ -22,29 +22,26 @@
 
 当前明确边界：
 - ✅ 有：LLM 生成问题与反馈 + 动作命令下发 + 4阶段流程 + 指标与日志框架 + HTTP 实时推送模式
-- ⚠️ 仍待：Python2 服务端的 `/command` 接口实现（对接 NAO SDK 动作执行）
+- ✅ 有：Python2 服务端 `POST /command`（含 canonical + legacy 命令兼容）
+- ⚠️ 仍待：真实 NAO 环境下动作细节、时延与稳定性校准
 
 ## 2. 当前未完成部分（你主要要做的）
 
-1. **Python2 机器人服务端完善**（`robot_server_py2/`）
-   - 当前仅 `Demo.py`，尚未形成完整 `POST /command` 服务。
-   - 需实现：接收 Python3 客户端的命令请求，调用 NAO SDK 执行动作，返回标准响应。
-   
-2. **NAO SDK 与真实设备联调**
+1. **NAO SDK 与真实设备联调**
    - 对接 `speak / nod / gaze / reset_posture` 等指令。
    - 确保错误码与协议文档对齐。
    
-3. **端到端 real 模式验收**
+2. **端到端 real 模式验收**
    - 目标：`client_py3 --real --asr-mode realtime --gaze-mode realtime` 在真实环境下稳定运行。
    - 验证 Python2 推送器（ASR/Gaze）-> Python3 客户端 -> Python2 服务端 -> NAO 机器人的完整链路。
    
-4. **真实设备实验参数校准**
+3. **真实设备实验参数校准**
    - 校准 `positive/negative` backchannel 的触发频率与时延。
    - 对齐实验记录字段与后续统计脚本。
 
 ## 3. 建议你先跑通的最小链路
 
-1) 在 Python2 server 侧先实现：
+1) 在 Python2 server 侧先验证：
 - `ping`
 - `speak`
 - `nod`
@@ -88,7 +85,7 @@ C:\Users\13807\miniconda3\python.exe run_client_demo.py --real --server-url http
 - 环境配置：`robot_server_py2/setup_naoqi_env.bat`
 
 ### 文档
-- **客户端使用说明**：`client_py3/README.md`
+- **总说明（推荐入口）**：`README.md`
 - **HTTP 实时推送集成指南**：`docs/realtime_http_integration_guide.md`（重要！）
 - **协议文档**：`docs/communication_protocol_v1.md`
 - **实验矩阵**：`docs/experiment_condition_matrix_and_operationalization.md`
@@ -97,7 +94,7 @@ C:\Users\13807\miniconda3\python.exe run_client_demo.py --real --server-url http
 1. `docs/experiment_condition_matrix_and_operationalization.md`（了解实验设计）
 2. `docs/communication_protocol_v1.md`（了解通信协议）
 3. `docs/realtime_http_integration_guide.md`（了解实时推送模式）
-4. `client_py3/README.md`（了解客户端使用）
+4. `README.md`（统一了解客户端与服务端使用）
 
 ## 5. 安全提醒
 

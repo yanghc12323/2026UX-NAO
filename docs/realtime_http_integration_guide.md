@@ -144,10 +144,8 @@ python run_client_demo.py \
   --real \
   --asr-mode realtime \
   --gaze-mode realtime \
-  --persona encouraging \
-  --backchannel positive \
-  --participant-id P001 \
-  --condition-id C1 \
+  --persona-style encouraging \
+  --backchanneling-type positive \
   --verbose
 ```
 
@@ -155,10 +153,8 @@ python run_client_demo.py \
 - `--real`: 使用真实机器人（非 mock）
 - `--asr-mode realtime`: 使用 HTTP 实时推送接收 ASR 数据
 - `--gaze-mode realtime`: 使用 HTTP 实时推送接收 Gaze 数据
-- `--persona`: 人格类型（encouraging 或 pressure）
-- `--backchannel`: 反馈类型（positive 或 negative）
-- `--participant-id`: 被试编号
-- `--condition-id`: 实验条件编号
+- `--persona-style`: 人格类型（encouraging 或 pressure）
+- `--backchanneling-type`: 反馈类型（positive 或 negative）
 
 **预期输出**：
 ```
@@ -536,7 +532,7 @@ python gaze_realtime_pusher.py --robot-ip 192.168.93.152 > gaze_log.txt 2>&1
 
 ```bash
 # 启动 Python3 客户端（实时模式）
-python run_client_demo.py --real --asr-mode realtime --gaze-mode realtime --persona encouraging --backchannel positive --participant-id P001
+python run_client_demo.py --real --asr-mode realtime --gaze-mode realtime --persona-style encouraging --backchanneling-type positive
 
 # 启动 ASR 推送器
 python asr_realtime_pusher.py --robot-ip 192.168.93.152
@@ -577,6 +573,6 @@ nao_interview_coach/
 如有问题，请参考：
 - 项目文档：`docs/handover_for_next_developer.md`
 - 通信协议：`docs/communication_protocol_v1.md`
-- 快速入门：`docs/python3_client_quickstart.md`
+- 统一入口：`README.md`
 
 祝实验顺利！🎉

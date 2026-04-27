@@ -8,8 +8,8 @@ echo NAOqi SDK 环境配置
 echo ============================================================
 echo.
 
-REM 设置 NAOqi SDK 路径（请根据实际路径修改）
-set NAOQI_SDK_PATH=D:\pynaoqi-python2.7-2.8.6.23-win64-vs2015-20191127_152649
+REM 设置 NAOqi SDK 路径
+set NAOQI_SDK_PATH=D:\HaochenYang-THU\UX-project\nao_interview_coach\pynaoqi-python2.7-2.8.6.23-win64-vs2015-20191127_152649
 
 REM 检查 SDK 是否存在
 if not exist "%NAOQI_SDK_PATH%\lib" (

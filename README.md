@@ -1,85 +1,287 @@
-# 2026UX-NAO
+# 2026UX-NAO · NAO Interview Coach
 
-## NAO Interview Coach
+用于高压模拟面试研究的人机交互实验平台。  
+采用双端架构：
 
-用于高压模拟面试研究的人机交互项目仓库。
+- **Python3 客户端（client_py3）**：实验流程编排、LLM 生成、指标计算、日志记录
+- **Python2 机器人端（robot_server_py2）**：NAOqi SDK 动作执行、实时 ASR/Gaze 推送
 
-本仓库当前聚焦两部分：
-- `client_py3/`：Python3 决策层客户端（已可运行，支持 DeepSeek）
-- `robot_server_py2/`：Python2 机器人执行层占位（当前仅示例 `Demo.py`）
+---
 
-## 0. 能力边界（截至当前版本）
+## 1) 实验目标与条件设计
 
-- ✅ 已具备：`Python3(流程/LLM)` -> `Python2(动作执行)` 的命令链路骨架
-- ✅ 已具备：LLM 生成问题与反馈（可按 persona/backchanneling 切换）
-- ✅ 已具备：HTTP 实时推送模式，支持外部 ASR/Gaze 进程推送数据到客户端
-- ✅ 已具备：三项客观指标自动化计算（语速、流畅性、注视比例）
-- ⚠️ 需配置：真实 NAO 机器人环境下的 ASR/Gaze 推送器（已提供 Python2 示例脚本）
-- ⚠️ 待完善：Python2 服务端的动作执行接口（`POST /command`）
+核心 2×2 条件：
 
-> 推荐职责划分：
-> - Python3：实验流程编排、ASR/视觉分析、指标计算、日志落盘、LLM 决策
-> - Python2：NAO 硬件动作执行与设备连接稳定性
+- Persona：`encouraging` / `pressure`
+- Backchanneling：`positive` / `negative`
 
-## 1. 当前状态（给歌晴）
+实验阶段（固定四段）：
 
-- ✅ Python3 客户端主链路已跑通（Mock 模式 + 实时推送模式）
-- ✅ 已接入 DeepSeek（OpenAI-compatible Chat Completions）
-- ✅ 已支持 2×2 实验条件：
-  - Persona：`encouraging` / `pressure`
-  - Backchanneling：`positive` / `negative`
-- ✅ 已支持 HTTP 实时推送模式接收 ASR/Gaze 数据
-- ✅ 已提供 Python2 推送器示例（`robot_server_py2/asr_realtime_pusher.py` 等）
-- ⏳ 真实机器人端动作执行（Python2 + NAO SDK）由后续同学继续接手完善
+1. `warmup`
+2. `task_intro`
+3. `formal_interview`（施加条件）
+4. `closing_and_questionnaire`
 
-## 2. 快速开始
+---
 
-> Windows 下如系统默认 `python` 为 2.7，请显式使用 Python3 可执行文件。
+## 2) 总体架构
 
-### 2.1 进入客户端目录并运行（Mock）
+### Python3（`client_py3/`）
+
+- 会话状态机与阶段推进
+- LLM 问题/反馈生成（支持 DeepSeek，OpenAI-compatible）
+- persona/backchanneling 条件化输出
+- 指标计算：
+  - `speech_rate_cpm`（语速）
+  - `disfluency_ratio`（语言流畅性）
+  - `gaze_contact_ratio`（注视机器人头部占比）
+- JSONL 结构化日志：`stage_event` / `metric_event` / `action_event`
+- 接收 Python2 推送器的实时数据（HTTP）
+
+### Python2（`robot_server_py2/`）
+
+- `command_server.py`：`POST /command` 动作执行服务
+- `nao_behavior_lib.py`：NAO 物理行为封装
+- `asr_realtime_pusher.py`：语音识别推送器
+- `gaze_realtime_pusher.py`：视线追踪推送器
+
+---
+
+## 3) 当前项目完成度（代码层）
+
+### 已完成
+
+- Python3 客户端主链路可运行（mock / real / realtime）
+- Python3 已具备可插拔输入模式：`mock/jsonl/realtime`
+- Python3 已具备实时 HTTP 接收桥（默认 8765）
+- Python2 `command_server` 已支持 canonical 命令路由：
+  - `ping/speak/nod/gaze/reset_posture/gesture/perform_sequence`
+- Python2 保留 legacy 兼容命令：
+  - `shake_head/stare/avert_gaze/reset_gaze/rest`
+- Python2 近期已修复控制台编码导致的启动崩溃（启动日志改为 ASCII）
+
+### 仍需实验联调/参数校准（非框架缺失）
+
+- 真实 NAO 动作时序、姿态细节校准
+- ASR/Gaze 实时阈值与稳定性校准
+- backchannel 触发频率与时机调优
+
+---
+
+## 4) 环境与位数要求（重要）
+
+### Python3 客户端
+
+- 建议 Python 3.8+
+- 在 Windows 上建议显式指定解释器（避免调用到 Python2）
+
+### Python2 + NAOqi（机器人端）
+
+- 必须 Python 2.7
+- **Python 位数与 NAOqi SDK 位数必须一致**
+
+你当前已确认：
+
+- `.venv27` 是 **32-bit Python2.7**
+- 若 SDK 路径为 `...win64...` 则会出现：
+  `ImportError: DLL load failed: %1 不是有效的 Win32 应用程序`
+
+即：**32-bit Python + 64-bit SDK 不兼容**。
+
+---
+
+## 5) 快速启动
+
+> 以下示例均为 Windows。
+
+### 5.1 Python3 客户端（Mock）
 
 ```bash
 cd client_py3
 C:\Users\13807\miniconda3\python.exe run_client_demo.py --verbose
 ```
 
-### 2.2 启用 DeepSeek
+### 5.2 Python2 动作服务
 
-```powershell
-$env:DEEPSEEK_API_KEY="你的DeepSeek_API_Key"
+```bash
+cd robot_server_py2
+python command_server.py
 ```
+
+### 5.3 实时实验模式（推荐，实验当天按此执行）
+
+> 这是明天正式实验的主流程。请严格按顺序执行：
+> **终端1（Python3客户端）→ 终端2（ASR推送器）→ 终端3（Gaze推送器）**。
+
+#### Step 0：实验前检查（2分钟）
+
+1. NAO 已开机，和实验电脑在同一局域网。
+2. 记录机器人 IP（示例：`192.168.93.152`，下面命令中的 `--robot-ip` 必须替换为当天实际 IP）。
+3. 确认 Python3 解释器可用（客户端）。
+4. 确认 Python2 + NAOqi 位数匹配（推送器）：
+
+```bash
+python -c "import struct; print(struct.calcsize('P')*8)"
+```
+
+若输出 `32`，则 NAOqi SDK 必须是 win32；若输出 `64`，则必须用 win64。
+
+---
+
+#### Step 1：启动 Python3 客户端（终端 1）
 
 ```bash
 cd client_py3
-C:\Users\13807\miniconda3\python.exe run_client_demo.py --use-llm --persona-style encouraging --backchanneling-type positive --verbose
+C:\Users\13807\miniconda3\python.exe run_client_demo.py --real --asr-mode realtime --gaze-mode realtime --persona-style encouraging --backchanneling-type positive --verbose
 ```
 
-## 3. 文档索引
+看到类似以下信息再进行下一步：
 
-- **Python3 客户端说明**：`client_py3/README.md`
-- **HTTP 实时推送集成指南**：`docs/realtime_http_integration_guide.md`（重要！）
-- **通信协议**：`docs/communication_protocol_v1.md`
-- **实验条件矩阵**：`docs/experiment_condition_matrix_and_operationalization.md`
-- **交接说明**：`docs/handover_for_next_developer.md`
+- HTTP 接收服务已启动（`127.0.0.1:8765`）
+- 进入 `warmup` 阶段
 
-## 4. 目标实验流程（文档对齐版）
+---
 
-1. **Warmup（中立）**：生活化闲聊 + 基线数据采集（语速/流利度/视线接触）
-2. **任务引入**：说明面试背景、规则与时长
-3. **正式面试**：1 分钟自我介绍（用于用户画像）+ 3~4 个 STAR 行为题
-4. **结束与问卷**：宣布结束并引导联系主试填写问卷
+#### Step 2：启动 ASR 推送器（终端 2，Python2）
 
-上述流程已写入 docs 文档，用于后续按阶段实现。
+```bash
+cd robot_server_py2
+python asr_realtime_pusher.py --robot-ip 192.168.93.152 --client-url http://127.0.0.1:8765/asr --stage warmup
+```
 
-## 5. 安全与开源注意事项
+预期现象：
 
-- 不要在代码、文档、commit 中提交任何 API Key。
-- 若曾在聊天或终端记录中暴露 key，请立即在平台控制台旋转/作废。
-- 建议提交前执行：
+- 显示已连接 NAO 语音识别服务
+- 显示已订阅 `WordRecognized`
+- 终端持续运行（不要关闭）
+
+---
+
+#### Step 3：启动 Gaze 推送器（终端 3，Python2）
+
+```bash
+cd robot_server_py2
+python gaze_realtime_pusher.py --robot-ip 192.168.93.152 --client-url http://127.0.0.1:8765/gaze --stage warmup --push-interval 2.0
+```
+
+预期现象：
+
+- 显示已连接 NAO 人脸检测服务
+- 显示已订阅 `FaceDetected`
+- 每隔一段时间推送 gaze 数据
+
+---
+
+#### Step 4：联通性确认（重点）
+
+回到终端 1（客户端），应能看到：
+
+- 收到 ASR 推送（文本、置信度、stage）
+- 收到 Gaze 推送（gaze_contact_s、stage）
+- 指标持续更新（语速/流畅性/注视比例）
+
+如果终端 1 完全收不到数据：
+
+1. 先检查 `--client-url` 是否写成 `http://127.0.0.1:8765/asr` 与 `http://127.0.0.1:8765/gaze`
+2. 确认终端 1 比终端 2/3 先启动
+3. 检查 `--robot-ip` 是否为当天真实 IP
+
+---
+
+#### Step 5：实验条件切换（2×2）
+
+客户端命令里改这两个参数即可：
+
+- `--persona-style encouraging|pressure`
+- `--backchanneling-type positive|negative`
+
+示例（压力型 + 消极反馈）：
+
+```bash
+C:\Users\13807\miniconda3\python.exe run_client_demo.py --real --asr-mode realtime --gaze-mode realtime --persona-style pressure --backchanneling-type negative --verbose
+```
+
+---
+
+#### Step 6：收尾与日志
+
+实验结束后按顺序停止：
+
+1. 先停推送器（终端2、3，`Ctrl+C`）
+2. 再停客户端（终端1）
+
+若启用了日志参数（`--enable-logging --log-dir logs`），请备份日志目录用于后续分析。
+
+---
+
+## 6) 常见问题（FAQ）
+
+### Q1: `DLL load failed: %1 不是有效的 Win32 应用程序`
+
+原因：Python2 与 NAOqi SDK 位数不一致（最常见）。
+
+排查：
+
+```bash
+python -c "import struct; print(struct.calcsize('P')*8)"
+```
+
+修复：
+
+- 32-bit Python2 搭配 win32 SDK
+- 64-bit Python2 搭配 win64 SDK
+
+### Q2: `command_server.py` 启动时中文日志崩溃
+
+已在仓库中修复为 ASCII 日志；若仍遇编码问题，优先在 `cmd` 终端运行。
+
+### Q3: 推送器连接失败
+
+- 确认 NAO 与实验机同网段
+- 确认客户端 8765 已启动
+- 确认 URL 路径正确：`/asr`、`/gaze`
+
+---
+
+## 7) 仓库结构
+
+```text
+nao_interview_coach/
+├── client_py3/
+│   ├── run_client_demo.py
+│   ├── data/
+│   └── client/
+├── robot_server_py2/
+│   ├── command_server.py
+│   ├── nao_behavior_lib.py
+│   ├── asr_realtime_pusher.py
+│   ├── gaze_realtime_pusher.py
+│   └── setup_naoqi_env.bat
+└── docs/
+    ├── communication_protocol_v1.md
+    ├── experiment_condition_matrix_and_operationalization.md
+    ├── realtime_http_integration_guide.md
+    └── handover_for_next_developer.md
+```
+
+---
+
+## 8) 文档索引
+
+- 协议定义：`docs/communication_protocol_v1.md`
+- 条件矩阵与操作化：`docs/experiment_condition_matrix_and_operationalization.md`
+- 实时集成指南：`docs/realtime_http_integration_guide.md`
+- 交接文档：`docs/handover_for_next_developer.md`
+
+---
+
+## 9) 安全与提交建议
+
+- 不要提交 API Key 或真实被试隐私数据
+- 若 key 泄露，立即旋转
+- 提交前建议：
 
 ```bash
 git status
 git diff -- . ':!*.pptx' ':!*.zip'
 ```
-
-确保没有误提交大型临时文件或敏感信息。

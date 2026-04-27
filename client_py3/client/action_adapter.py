@@ -92,6 +92,29 @@ class RobotActionAdapter(object):
         return self.command_client.send("perform_sequence", payload=payload)
 
     # ------------------------
+    # Python2 legacy 动作兼容（按需使用）
+    # ------------------------
+    def shake_head(self) -> CommandResponse:
+        """兼容旧动作：摇头。"""
+        return self.command_client.send("shake_head", payload={})
+
+    def stare(self) -> CommandResponse:
+        """兼容旧动作：压迫性凝视。"""
+        return self.command_client.send("stare", payload={})
+
+    def avert_gaze(self) -> CommandResponse:
+        """兼容旧动作：回避视线。"""
+        return self.command_client.send("avert_gaze", payload={})
+
+    def reset_gaze(self) -> CommandResponse:
+        """兼容旧动作：重置视线。"""
+        return self.command_client.send("reset_gaze", payload={})
+
+    def rest(self) -> CommandResponse:
+        """兼容旧动作：进入休息姿态。"""
+        return self.command_client.send("rest", payload={})
+
+    # ------------------------
     # 内部工具
     # ------------------------
     @staticmethod
