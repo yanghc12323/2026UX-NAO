@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NAO 实验 Web 控制台</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #fff;
+      --border: #dce3ef;
+      --text: #1c2a3a;
+      --muted: #6f7f95;
+      --primary: #2563eb;
+      --danger: #dc2626;
+      --ok: #16a34a;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .layout {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    h1, h2 {
+      margin: 0 0 10px;
+    }
+
+    h1 { font-size: 22px; }
+    h2 { font-size: 16px; }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    label {
+      font-size: 13px;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 180px;
+    }
+
+    input, select, button {
+      font-size: 14px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    button {
+      cursor: pointer;
+      min-width: 100px;
+    }
+
+    .primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+    .ok { background: var(--ok); color: #fff; border-color: var(--ok); }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 10px;
+      cursor: pointer;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .chip.active {
+      background: #e8f0ff;
+      border-color: var(--primary);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fcfdff;
+    }
+
+    .metric .k { font-size: 12px; color: var(--muted); }
+    .metric .v { font-size: 20px; font-weight: 700; margin-top: 4px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .status {
+      font-size: 13px;
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
+
+    .mono {
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      word-break: break-word;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .conn-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .conn-item {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fcfdff;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-left: 6px;
+    }
+
+    .badge.ok { background: #e8f8ee; color: #166534; }
+    .badge.err { background: #fdecec; color: #991b1b; }
+
+    .alert-box {
+      border: 1px solid #f3c2c2;
+      background: #fff5f5;
+      border-radius: 8px;
+      padding: 8px;
+      color: #8b1b1b;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="card">
+      <h1>NAO 实验 Web 控制台</h1>
+      <div class="status" id="serviceStatus">正在连接后端...</div>
+    </div>
+
+    <div class="card">
+      <h2>0) 连接状态监控</h2>
+      <div class="conn-grid" id="connectivityGrid"></div>
+      <div id="connectivityAlert" class="alert-box" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+      <h2>1) 被试信息与条件配置</h2>
+      <div class="row">
+        <label>被试编号
+          <input id="participantId" placeholder="例如 P032" />
+        </label>
+        <label>姓名
+          <input id="participantName" placeholder="例如 张三" />
+        </label>
+        <label>实验条件（2×2）
+          <select id="conditionSelect"></select>
+        </label>
+      </div>
+      <div class="row">
+        <button class="primary" id="btnStart">开始会话</button>
+        <button class="danger" id="btnEnd">结束会话并导出</button>
+        <button id="btnExport">手动导出</button>
+      </div>
+      <div class="status" id="exportStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>2) 阶段控制（四阶段）</h2>
+      <div class="chips" id="stageChips"></div>
+      <div class="status" id="sessionSummary"></div>
+    </div>
+
+    <div class="card">
+      <h2>3) 实时指标</h2>
+      <div class="grid" id="metricsGrid"></div>
+    </div>
+
+    <div class="card">
+      <h2>4) 最近实时记录（最多20条）</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>时间戳</th>
+            <th>阶段</th>
+            <th>文本</th>
+            <th>语速</th>
+            <th>流畅性</th>
+            <th>注视比例</th>
+          </tr>
+        </thead>
+        <tbody id="recentMetricsBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>5) 最近 ASR / Gaze 事件</h2>
+      <div class="row">
+        <div style="flex:1; min-width: 280px;">
+          <div class="status">latest_asr</div>
+          <div id="latestAsr" class="mono">-</div>
+        </div>
+        <div style="flex:1; min-width: 280px;">
+          <div class="status">latest_gaze</div>
+          <div id="latestGaze" class="mono">-</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    let latestStatus = null;
+    let pollTimer = null;
+    let lastAlertKey = '';
+
+    async function api(path, method = 'GET', body = null) {
+      const resp = await fetch(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : null,
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.ok === false) {
+        const err = data.error || `HTTP_${resp.status}`;
+        throw new Error(err + (data.reason ? `: ${data.reason}` : ''));
+      }
+      return data;
+    }
+
+    function formatTs(ms) {
+      if (!ms) return '-';
+      const d = new Date(ms);
+      return d.toLocaleString();
+    }
+
+    function toJson(v) {
+      return v ? JSON.stringify(v, null, 2) : '-';
+    }
+
+    function yesNoBadge(ok) {
+      return ok
+        ? '<span class="badge ok">正常</span>'
+        : '<span class="badge err">异常</span>';
+    }
+
+    function renderConnectivity(status) {
+      const c = status.connectivity || {};
+      const asr = c.asr || {};
+      const gaze = c.gaze || {};
+      const cmd = c.command_server || {};
+      const warnings = c.warnings || [];
+
+      const rows = [
+        {
+          name: 'ASR 推送',
+          ok: !!asr.ok,
+          desc: asr.last_received_at_ms
+            ? `最后接收: ${formatTs(asr.last_received_at_ms)}\n超时阈值: ${asr.stale_timeout_ms} ms\n当前延迟: ${asr.age_ms ?? '-'} ms`
+            : '尚未收到 ASR 推送',
+        },
+        {
+          name: 'Gaze 推送',
+          ok: !!gaze.ok,
+          desc: gaze.last_received_at_ms
+            ? `最后接收: ${formatTs(gaze.last_received_at_ms)}\n超时阈值: ${gaze.stale_timeout_ms} ms\n当前延迟: ${gaze.age_ms ?? '-'} ms`
+            : '尚未收到 Gaze 推送',
+        },
+        {
+          name: 'command_server',
+          ok: !!cmd.ok,
+          desc: `检查时间: ${formatTs(cmd.checked_at_ms)}\nURL: ${cmd.url || '-'}\n信息: ${cmd.message || '-'}`,
+        },
+      ];
+
+      $('connectivityGrid').innerHTML = rows.map((r) => `
+        <div class="conn-item">
+          <div><strong>${r.name}</strong>${yesNoBadge(r.ok)}</div>
+          <div class="status">${r.desc}</div>
+        </div>
+      `).join('');
+
+      const alertBox = $('connectivityAlert');
+      if (warnings.length > 0) {
+        alertBox.style.display = 'block';
+        alertBox.textContent = `⚠ 请处理以下连接告警：\n- ${warnings.join('\n- ')}`;
+
+        const key = warnings.join('|');
+        if (key !== lastAlertKey) {
+          lastAlertKey = key;
+          alert(`连接告警:\n- ${warnings.join('\n- ')}`);
+        }
+      } else {
+        alertBox.style.display = 'none';
+        alertBox.textContent = '';
+        lastAlertKey = '';
+      }
+    }
+
+    function renderConditions(conditions) {
+      const sel = $('conditionSelect');
+      sel.innerHTML = '';
+      Object.entries(conditions).forEach(([id, c]) => {
+        const op = document.createElement('option');
+        op.value = id;
+        op.textContent = `${id} | ${c.label} | persona=${c.persona_style}, backchannel=${c.backchanneling_type}`;
+        sel.appendChild(op);
+      });
+    }
+
+    function renderStageChips(stages, currentStage) {
+      const box = $('stageChips');
+      box.innerHTML = '';
+      stages.forEach((stage) => {
+        const btn = document.createElement('button');
+        btn.className = 'chip' + (stage === currentStage ? ' active' : '');
+        btn.textContent = stage;
+        btn.onclick = async () => {
+          try {
+            await api('/api/stage', 'POST', { stage });
+            await refreshStatus();
+          } catch (e) {
+            alert(`阶段切换失败: ${e.message}`);
+          }
+        };
+        box.appendChild(btn);
+      });
+    }
+
+    function renderMetrics(status) {
+      const latest = status.latest_metrics || {};
+      const agg = status.aggregate_metrics || {};
+      const c = status.counts || {};
+
+      const items = [
+        ['当前阶段', status.session?.current_stage || '-'],
+        ['最近语速（cpm）', latest.speech_rate_cpm ?? '-'],
+        ['最近流畅性', latest.disfluency_ratio ?? '-'],
+        ['最近注视比例', latest.gaze_contact_ratio ?? '-'],
+        ['平均语速（cpm）', agg.speech_rate_cpm ?? 0],
+        ['平均流畅性', agg.disfluency_ratio ?? 0],
+        ['平均注视比例', agg.gaze_contact_ratio ?? 0],
+        ['ASR 条数', c.asr_events ?? 0],
+        ['Gaze 条数', c.gaze_events ?? 0],
+        ['Metric 条数', c.metric_events ?? 0],
+      ];
+
+      $('metricsGrid').innerHTML = items.map(([k, v]) => `
+        <div class="metric">
+          <div class="k">${k}</div>
+          <div class="v">${v}</div>
+        </div>`).join('');
+
+      $('latestAsr').textContent = toJson(status.latest_asr);
+      $('latestGaze').textContent = toJson(status.latest_gaze);
+    }
+
+    function renderRecentMetrics(rows) {
+      const body = $('recentMetricsBody');
+      body.innerHTML = '';
+      (rows || []).slice().reverse().forEach((r) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${formatTs(r.timestamp_ms)}</td>
+          <td>${r.stage || '-'}</td>
+          <td>${(r.text || '').slice(0, 80)}</td>
+          <td>${r.speech_rate_cpm ?? '-'}</td>
+          <td>${r.disfluency_ratio ?? '-'}</td>
+          <td>${r.gaze_contact_ratio ?? '-'}</td>
+        `;
+        body.appendChild(tr);
+      });
+    }
+
+    function renderSession(status) {
+      const s = status.session;
+      if (!s) {
+        $('sessionSummary').textContent = '当前无会话，请先录入被试并开始。';
+        return;
+      }
+      $('sessionSummary').textContent = [
+        `session_id: ${s.session_id}`,
+        `participant: ${s.participant_id} / ${s.participant_name}`,
+        `condition: ${s.condition_id} | persona=${s.persona_style}, backchannel=${s.backchanneling_type}`,
+        `started_at: ${formatTs(s.started_at_ms)}`,
+        `ended_at: ${s.ended_at_ms ? formatTs(s.ended_at_ms) : '-'}`,
+      ].join('\n');
+    }
+
+    function renderAll(status) {
+      latestStatus = status;
+      $('serviceStatus').textContent = `后端已连接：${new Date().toLocaleTimeString()}（自动轮询 1s）`;
+      renderConnectivity(status);
+      renderConditions(status.conditions || {});
+      renderStageChips(status.stages || [], status.session?.current_stage);
+      renderMetrics(status);
+      renderRecentMetrics(status.recent_metrics || []);
+      renderSession(status);
+    }
+
+    async function refreshStatus() {
+      const status = await api('/api/status');
+      renderAll(status);
+    }
+
+    async function onStartSession() {
+      const participant_id = $('participantId').value.trim();
+      const participant_name = $('participantName').value.trim();
+      const condition_id = $('conditionSelect').value;
+      if (!participant_id || !participant_name || !condition_id) {
+        alert('请完整填写：被试编号、姓名、实验条件');
+        return;
+      }
+      await api('/api/session/start', 'POST', { participant_id, participant_name, condition_id });
+      $('exportStatus').textContent = '会话已开始。';
+      await refreshStatus();
+    }
+
+    async function onEndSession() {
+      const data = await api('/api/session/end', 'POST', {});
+      const exp = data.export || {};
+      $('exportStatus').textContent = `会话已结束并导出：${exp.file_type || '-'} -> ${exp.file_path || '-'}`;
+      await refreshStatus();
+    }
+
+    async function onExport() {
+      const data = await api('/api/session/export', 'POST', {});
+      $('exportStatus').textContent = `导出成功：${data.file_type || '-'} -> ${data.file_path || '-'}`;
+    }
+
+    async function bootstrap() {
+      try {
+        await refreshStatus();
+      } catch (e) {
+        $('serviceStatus').textContent = `后端连接失败：${e.message}`;
+      }
+
+      $('btnStart').onclick = () => onStartSession().catch((e) => alert(`开始失败: ${e.message}`));
+      $('btnEnd').onclick = () => onEndSession().catch((e) => alert(`结束失败: ${e.message}`));
+      $('btnExport').onclick = () => onExport().catch((e) => alert(`导出失败: ${e.message}`));
+
+      pollTimer = setInterval(() => {
+        refreshStatus().catch((e) => {
+          $('serviceStatus').textContent = `轮询失败：${e.message}`;
+        });
+      }, 1000);
+      window.addEventListener('beforeunload', () => clearInterval(pollTimer));
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>

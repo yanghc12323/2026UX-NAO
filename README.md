@@ -59,6 +59,12 @@
 - Python2 保留 legacy 兼容命令：
   - `shake_head/stare/avert_gaze/reset_gaze/rest`
 - Python2 近期已修复控制台编码导致的启动崩溃（启动日志改为 ASCII）
+- 已新增 Web 实验控制台：`client_py3/web_console_server.py`
+  - 主试可在网页录入被试编号/姓名、选择 2×2 条件
+  - 可手动切换四个实验阶段
+  - 可实时查看 ASR/Gaze 驱动的指标（语速/流畅性/注视比例等）
+  - 内置连接健康监控与告警（ASR/Gaze 推送、command_server 可达性）
+  - 会话结束自动导出被试数据（优先 `.xlsx`，失败回退 `.csv`）
 
 ### 仍需实验联调/参数校准（非框架缺失）
 
@@ -108,7 +114,62 @@ cd robot_server_py2
 python command_server.py
 ```
 
-### 5.3 实时实验模式（推荐，实验当天按此执行）
+### 5.3 Web 控制台模式（推荐主试使用）
+
+> 若希望主试通过网页控制实验（而不是命令行输入被试信息/条件/阶段），按本节执行。
+
+#### Step 1：启动 Python2 动作服务（终端 1，可选但推荐）
+
+```bash
+cd robot_server_py2
+python command_server.py
+```
+
+> 用途：Web 控制台可以把动作命令转发到 `POST /command`。
+
+#### Step 2：启动 Web 控制台后端（终端 2，Python3）
+
+```bash
+cd client_py3
+C:\Users\13807\miniconda3\python.exe web_console_server.py --host 127.0.0.1 --port 8780 --robot-server-url http://127.0.0.1:8000/command
+```
+
+启动后访问：`http://127.0.0.1:8780`
+
+#### Step 3：启动 ASR / Gaze 推送器并指向 Web 控制台（终端 3/4，Python2）
+
+ASR：
+
+```bash
+cd robot_server_py2
+python asr_realtime_pusher.py --robot-ip 192.168.93.152 --client-url http://127.0.0.1:8780/asr --stage warmup
+```
+
+Gaze：
+
+```bash
+cd robot_server_py2
+python gaze_realtime_pusher.py --robot-ip 192.168.93.152 --client-url http://127.0.0.1:8780/gaze --stage warmup --push-interval 2.0
+```
+
+#### Step 4：主试在网页执行操作
+
+1. 填写被试编号、姓名
+2. 选择条件（C1~C4）
+3. 点击「开始会话」
+4. 按实验进度点击阶段按钮切换：
+   - `warmup`
+   - `task_intro`
+   - `formal_interview`
+   - `closing_and_questionnaire`
+5. 实时观察指标和最近事件
+   - 顶部「连接状态监控」会显示：ASR / Gaze / command_server 的正常或异常状态
+   - 任一路异常时，会显示红色告警框并弹窗提醒主试
+6. 点击「结束会话并导出」自动生成文件到 `client_py3/exports/`
+
+---
+
+### 5.4 实时实验模式（CLI 客户端模式，保留）
 
 > 这是明天正式实验的主流程。请严格按顺序执行：
 > **终端1（Python3客户端）→ 终端2（ASR推送器）→ 终端3（Gaze推送器）**。
@@ -214,7 +275,26 @@ C:\Users\13807\miniconda3\python.exe run_client_demo.py --real --asr-mode realti
 
 ---
 
-## 6) 常见问题（FAQ）
+## 6) Web 控制台接口速查
+
+- 页面：`GET /`（或 `/index.html`）
+- 健康检查：`GET /api/health`
+- 状态轮询：`GET /api/status`
+  - 包含 `connectivity` 字段：
+    - `asr`（最后接收时间、超时判定）
+    - `gaze`（最后接收时间、超时判定）
+    - `command_server`（后台 ping 可达性探测）
+    - `warnings`（面向主试的告警文案）
+- 开始会话：`POST /api/session/start`
+- 结束会话（含自动导出）：`POST /api/session/end`
+- 手动导出：`POST /api/session/export`
+- 切换阶段：`POST /api/stage`
+- 接收实时数据：`POST /asr`、`POST /gaze`
+- 转发机器人命令：`POST /api/robot/command`
+
+---
+
+## 7) 常见问题（FAQ）
 
 ### Q1: `DLL load failed: %1 不是有效的 Win32 应用程序`
 
@@ -238,17 +318,38 @@ python -c "import struct; print(struct.calcsize('P')*8)"
 ### Q3: 推送器连接失败
 
 - 确认 NAO 与实验机同网段
-- 确认客户端 8765 已启动
+- 确认接收端已启动：
+  - Web 控制台模式：`127.0.0.1:8780`
+  - CLI 客户端模式：`127.0.0.1:8765`
 - 确认 URL 路径正确：`/asr`、`/gaze`
+
+### Q4: 网页出现连接告警（ASR/Gaze/command_server 异常）
+
+先看页面「连接状态监控」中的具体提示，再按顺序排查：
+
+1. **command_server 异常**
+   - 确认 `robot_server_py2/command_server.py` 已启动
+   - 确认 Web 启动参数 `--robot-server-url` 正确（默认 `http://127.0.0.1:8000/command`）
+2. **ASR 异常**
+   - 确认 `asr_realtime_pusher.py` 正在运行
+   - 确认 `--client-url` 指向 `http://127.0.0.1:8780/asr`
+3. **Gaze 异常**
+   - 确认 `gaze_realtime_pusher.py` 正在运行
+   - 确认 `--client-url` 指向 `http://127.0.0.1:8780/gaze`
+
+说明：当前默认策略是 **10 秒未收到数据即判定 ASR/Gaze 超时**，因此推送中断时主试会快速收到提醒。
 
 ---
 
-## 7) 仓库结构
+## 8) 仓库结构
 
 ```text
 nao_interview_coach/
 ├── client_py3/
 │   ├── run_client_demo.py
+│   ├── web_console_server.py
+│   ├── web_console/
+│   │   └── index.html
 │   ├── data/
 │   └── client/
 ├── robot_server_py2/
@@ -266,7 +367,7 @@ nao_interview_coach/
 
 ---
 
-## 8) 文档索引
+## 9) 文档索引
 
 - 协议定义：`docs/communication_protocol_v1.md`
 - 条件矩阵与操作化：`docs/experiment_condition_matrix_and_operationalization.md`
@@ -275,7 +376,7 @@ nao_interview_coach/
 
 ---
 
-## 9) 安全与提交建议
+## 10) 安全与提交建议
 
 - 不要提交 API Key 或真实被试隐私数据
 - 若 key 泄露，立即旋转
