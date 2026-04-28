@@ -70,15 +70,62 @@ import time
 import json
 import urllib2
 import argparse
+import os
 from naoqi import ALProxy, ALBroker, ALModule
 
 
-DEFAULT_VOCABULARY = [
+def load_vocabulary_from_file(filepath):
+    """从文件加载词汇表
+    
+    Args:
+        filepath: 词汇表文件路径（UTF-8编码，每行一个词）
+    
+    Returns:
+        list: 词汇列表（unicode）
+    """
+    vocabulary = []
+    if not os.path.exists(filepath):
+        print("[WARN] 词汇表文件不存在: %s" % filepath)
+        return vocabulary
+    
+    try:
+        with open(filepath, 'r') as f:
+            for line in f:
+                word = line.strip()
+                if word:
+                    try:
+                        # Python2需要显式转换为unicode
+                        if isinstance(word, str):
+                            vocabulary.append(word.decode('utf-8'))
+                        else:
+                            vocabulary.append(word)
+                    except Exception as e:
+                        print("[WARN] 词汇解码失败: %s" % word)
+        print("[INFO] 从文件加载词汇表: %s (%d 个词)" % (filepath, len(vocabulary)))
+    except Exception as e:
+        print("[ERROR] 加载词汇表失败: %s" % str(e))
+    
+    return vocabulary
+
+
+# 默认词汇表（备用）
+DEFAULT_VOCABULARY_FALLBACK = [
     u"是的", u"不是", u"好的", u"明白", u"继续", u"谢谢", u"可以", u"嗯", u"好",
     u"项目", u"开发", u"团队", u"负责", u"完成", u"学习", u"经验", u"能力", u"挑战", u"解决",
     u"实习", u"研究", u"课程", u"算法", u"系统", u"测试", u"优化", u"设计", u"协作", u"沟通",
     u"目标", u"计划", u"问题", u"困难", u"成长", u"改进", u"时间", u"压力", u"反馈", u"总结",
 ]
+
+# 尝试从文件加载扩充词汇表，如果失败则使用默认词汇表
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_vocab_file = os.path.join(_script_dir, 'vocab_interview.txt')
+DEFAULT_VOCABULARY = load_vocabulary_from_file(_vocab_file)
+
+if not DEFAULT_VOCABULARY:
+    print("[WARN] 使用备用词汇表（40个词）")
+    DEFAULT_VOCABULARY = DEFAULT_VOCABULARY_FALLBACK
+else:
+    print("[INFO] 已加载扩充词汇表，共 %d 个词" % len(DEFAULT_VOCABULARY))
 
 # ============================================================================
 # 全局变量（用于 NAOqi 回调机制）
