@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 import sys
 import time
+import os
+import argparse
 
 # 1. 终结中文乱码魔法
 reload(sys)
 sys.setdefaultencoding('utf-8')
 
-# 2. 指路牌：请把这里换成你真实的 32 位 SDK lib 路径
+# 2. 真实的 32 位 SDK lib 路径
 sys.path.insert(0, r"C:\Python27\Lib\site-packages")
 
 import json
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+import socket
 
 # 🌟【关键修改 1】导入我们刚刚写好的高压行为核心库
 try:
@@ -24,6 +27,8 @@ except Exception:
 SERVER_PORT = 8000
 robot_controller = None  # 唯一的全局控制器对象
 SERVER_START_MS = int(time.time() * 1000)
+CONTROLLER_MODE = "unknown"
+ROBOT_ENDPOINT = ""
 
 
 class CommandError(Exception):
@@ -36,38 +41,19 @@ class CommandError(Exception):
 
 
 # ==========================================
-# 🌟【关键修改 2】极简初始化逻辑
+# 机器人初始化
 # ==========================================
-def init_robot():
-    global robot_controller
-    try:
-        if NaoBehaviorController is None:
-            raise RuntimeError("naoqi_or_behavior_lib_unavailable")
-        # 尝试直连真实的物理机器人
-        robot_controller = NaoBehaviorController(ip="192.168.93.152")
-    except Exception as e:
-        print("\n[WARNING] robot connection failed; using mock controller for local debugging.\n")
-
-        # 精简虚拟替身：专门为了让你今天能和组员测试跨端 HTTP 通信
-        class MockController(object):
-            def speak(self, text):
-                del text
-                print("[MOCK] speak")
-                return True
-
-            def nod(self): print("[MOCK] nod"); return True
-
-            def shake_head(self): print("[MOCK] shake_head"); return True
-
-            def stare_pressure(self): print("[MOCK] stare_pressure"); return True
-
-            def avert_gaze(self): print("[MOCK] avert_gaze"); return True
-
-            def reset_gaze(self): print("[MOCK] reset_gaze"); return True
-
-            def rest(self): print("[MOCK] rest"); return True
-
-        robot_controller = MockController()
+def init_robot(robot_ip, robot_port):
+    """初始化真实NAO机器人连接"""
+    global robot_controller, CONTROLLER_MODE, ROBOT_ENDPOINT
+    ROBOT_ENDPOINT = "%s:%s" % (robot_ip, robot_port)
+    
+    if NaoBehaviorController is None:
+        raise RuntimeError("naoqi_or_behavior_lib_unavailable")
+    
+    robot_controller = NaoBehaviorController(ip=robot_ip, port=robot_port)
+    CONTROLLER_MODE = "real"
+    print("[INFO] robot controller connected: %s" % ROBOT_ENDPOINT)
 
 
 def now_ms():
@@ -159,6 +145,8 @@ def route_command(command, payload):
         return {
             "alive": True,
             "server_uptime_ms": now_ms() - SERVER_START_MS,
+            "controller_mode": CONTROLLER_MODE,
+            "robot_endpoint": ROBOT_ENDPOINT,
         }
 
     if cmd == "speak":
@@ -323,22 +311,55 @@ class RequestHandler(BaseHTTPRequestHandler):
         # 静默 BaseHTTPServer 默认日志，避免污染调试输出
         return
 
+    def finish(self):
+        """忽略客户端超时/主动断开导致的 flush 异常（Windows 常见 Errno 10053）。"""
+        try:
+            if not self.wfile.closed:
+                self.wfile.flush()
+        except socket.error as e:
+            print("[WARN] client_disconnected_during_flush: %s" % str(e))
+        finally:
+            try:
+                self.wfile.close()
+            except Exception:
+                pass
+            try:
+                self.rfile.close()
+            except Exception:
+                pass
+
     def _send_response(self, status_code, response_dict):
+        raw = json.dumps(response_dict)
         self.send_response(status_code)
         self.send_header('Content-type', 'application/json')
+        self.send_header('Content-Length', str(len(raw)))
+        self.send_header('Connection', 'close')
         self.end_headers()
-        self.wfile.write(json.dumps(response_dict))
+        try:
+            self.wfile.write(raw)
+        except socket.error as e:
+            # 客户端（通常是 Python3 端）超时后会主动断开，服务端写回时会触发 10053。
+            print("[WARN] client_disconnected_before_response_write: %s" % str(e))
+        self.close_connection = True
 
 
 if __name__ == '__main__':
-    # 1. 尝试连接机器人 / 开启替身
-    init_robot()
+    parser = argparse.ArgumentParser(description="NAO command server (Python2)")
+    parser.add_argument("--robot-ip", default=os.environ.get("NAO_ROBOT_IP", "192.168.93.152"))
+    parser.add_argument("--robot-port", type=int, default=int(os.environ.get("NAO_ROBOT_PORT", "9559")))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("COMMAND_SERVER_PORT", SERVER_PORT)))
+    args = parser.parse_args()
+
+    # 连接真实NAO机器人
+    init_robot(robot_ip=args.robot_ip, robot_port=args.robot_port)
 
     # 2. 启动服务器监听
-    httpd = HTTPServer(('', SERVER_PORT), RequestHandler)
+    httpd = HTTPServer(('', args.port), RequestHandler)
     print("\n==============================================")
     print("[INFO] NAO interview control server started")
-    print("[INFO] listen_port: %d" % SERVER_PORT)
+    print("[INFO] listen_port: %d" % args.port)
+    print("[INFO] robot_endpoint: %s" % ROBOT_ENDPOINT)
+    print("[INFO] controller_mode: %s" % CONTROLLER_MODE)
     print("==============================================\n")
     try:
         httpd.serve_forever()

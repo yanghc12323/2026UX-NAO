@@ -7,6 +7,14 @@
 from dataclasses import dataclass
 
 
+CONDITION_MATRIX = {
+    "C1": {"persona_style": "encouraging", "backchanneling_type": "positive", "label": "鼓励型 × 积极反馈"},
+    "C2": {"persona_style": "encouraging", "backchanneling_type": "negative", "label": "鼓励型 × 消极反馈"},
+    "C3": {"persona_style": "pressure", "backchanneling_type": "positive", "label": "压力型 × 积极反馈"},
+    "C4": {"persona_style": "pressure", "backchanneling_type": "negative", "label": "压力型 × 消极反馈"},
+}
+
+
 @dataclass
 class InterviewPolicy:
     """面试策略参数。
@@ -38,3 +46,49 @@ class InterviewPolicy:
         if self.backchanneling_type == "negative":
             return "使用消极 backchanneling（如更少肯定、审慎回应、轻微质疑式短反馈）。"
         return "使用中性 backchanneling。"
+
+
+@dataclass
+class ConditionPolicy:
+    """从实验条件派生统一策略，供 Web 与 CLI 共用。"""
+
+    condition_id: str
+    persona_style: str
+    backchanneling_type: str
+    label: str = ""
+
+    @classmethod
+    def from_condition_id(cls, condition_id: str) -> "ConditionPolicy":
+        c = CONDITION_MATRIX.get(str(condition_id or "").strip().upper())
+        if c is None:
+            raise ValueError("invalid_condition_id")
+        return cls(
+            condition_id=str(condition_id).strip().upper(),
+            persona_style=str(c["persona_style"]),
+            backchanneling_type=str(c["backchanneling_type"]),
+            label=str(c.get("label", "")),
+        )
+
+    @classmethod
+    def from_styles(cls, persona_style: str, backchanneling_type: str, condition_id: str = "CUSTOM") -> "ConditionPolicy":
+        return cls(
+            condition_id=str(condition_id),
+            persona_style=str(persona_style or "encouraging"),
+            backchanneling_type=str(backchanneling_type or "positive"),
+            label="custom",
+        )
+
+    def to_interview_policy(self, target_group: str = "正在寻找企业实习机会的本科生", language: str = "zh") -> InterviewPolicy:
+        return InterviewPolicy(
+            target_group=target_group,
+            persona_style=self.persona_style,
+            backchanneling_type=self.backchanneling_type,
+            language=language,
+        )
+
+    def backchannel_profile(self) -> dict:
+        if self.backchanneling_type == "positive":
+            return {"nod_frequency": "high", "ack_style": "affirmative"}
+        if self.backchanneling_type == "negative":
+            return {"nod_frequency": "low", "ack_style": "skeptical"}
+        return {"nod_frequency": "medium", "ack_style": "neutral"}

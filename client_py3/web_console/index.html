@@ -221,8 +221,10 @@
 
     <div class="card">
       <h2>2) 阶段控制（四阶段）</h2>
+      <div class="status">点击任一阶段按钮，即刻切换并触发该阶段入场动作（speak / nod / reset）。</div>
       <div class="chips" id="stageChips"></div>
       <div class="status" id="sessionSummary"></div>
+      <div class="status" id="stageActionStatus"></div>
     </div>
 
     <div class="card">
@@ -372,8 +374,12 @@
         btn.textContent = stage;
         btn.onclick = async () => {
           try {
-            await api('/api/stage', 'POST', { stage });
-            await refreshStatus();
+            const data = await api('/api/stage', 'POST', { stage, enter_now: true });
+            const actions = data.stage_entry_actions || [];
+            $('stageActionStatus').textContent = actions.length
+              ? `阶段入场动作：` + actions.map((a) => `${a.command}:${a.ok ? 'ok' : 'fail'}`).join(', ')
+              : '阶段已切换（未配置入场动作）';
+            renderAll(data);
           } catch (e) {
             alert(`阶段切换失败: ${e.message}`);
           }

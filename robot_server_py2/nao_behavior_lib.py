@@ -11,25 +11,41 @@ import time
 
 
 class NaoBehaviorController(object):
-    def __init__(self, ip="192.168.93.152", port=9559):
+    def __init__(self, ip="172.20.10.4", port=9559):
         """初始化代理，直连物理机器人"""
         self.ip = ip
         self.port = port
 
-        print("[INFO] 正在连接实体机器人: %s:%s ..." % (ip, port))
+        # NOTE: 在部分 Windows + Python2 控制台环境下，中文 print 可能触发 IOError: [Errno 0]
+        # 这里统一使用 ASCII 日志，避免连接前就因编码问题崩溃。
+        print("[INFO] connecting to robot: %s:%s ..." % (ip, port))
         try:
             self.tts = ALProxy("ALTextToSpeech", ip, port)
             self.motion = ALProxy("ALMotion", ip, port)
             self.posture = ALProxy("ALRobotPosture", ip, port)
             self.leds = ALProxy("ALLeds", ip, port)
+            self.audio = ALProxy("ALAudioDevice", ip, port)
 
             # 基础设置：中文、唤醒、初始站姿
             self.tts.setLanguage("Chinese")
+            # 强制提高音量，避免“命令成功但听不到声音”。
+            try:
+                self.audio.setOutputVolume(90)
+            except Exception as e:
+                print("[WARNING] setOutputVolume failed: %s" % str(e))
+
+            try:
+                # 语音参数兜底，确保音量/语速在可听范围。
+                self.tts.setParameter("volume", 1.0)
+                self.tts.setParameter("speed", 90.0)
+            except Exception as e:
+                print("[WARNING] set TTS params failed: %s" % str(e))
+
             self.motion.wakeUp()
             self.posture.goToPosture("StandInit", 0.5)  # 标准站姿，保证重心稳定
-            print("[INFO] 机器人连接成功！准备执行高压面试指令。")
+            print("[INFO] robot connected. ready for interview commands.")
         except Exception as e:
-            print("[ERROR] 无法连接到机器人，请检查 IP 和网络！错误详情: %s" % str(e))
+            print("[ERROR] failed to connect robot (check IP/network/SDK): %s" % str(e))
             raise
 
     # ==========================================
@@ -39,6 +55,11 @@ class NaoBehaviorController(object):
         """说话"""
         if text:
             print("[ACTION] 机器人正在说话: %s" % text)
+            # 再次兜底设置音量，避免运行中被外部流程改小。
+            try:
+                self.audio.setOutputVolume(90)
+            except Exception:
+                pass
             self.tts.say(str(text))
         return True
 

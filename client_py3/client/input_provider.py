@@ -199,9 +199,15 @@ class RealtimeASRProvider(object):
             time.sleep(self.poll_interval_s)
 
     def _parse_record(self, stage: str, data: dict) -> Optional[UserInputSample]:
+        # 心跳包仅用于连通性保活，不应进入对话/指标链路。
+        if bool(data.get("heartbeat", False)):
+            return None
+
         text = str(data.get("text", "")).strip()
         if not text:
             print("[WARN] asr_empty_text_skipped")
+            return None
+        if text == "<heartbeat>":
             return None
 
         record_stage = str(data.get("stage", "")).strip()

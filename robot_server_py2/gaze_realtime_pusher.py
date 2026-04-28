@@ -67,8 +67,6 @@ def print(*args, **kwargs):
 # 注意：请确保这个路径和你 command_server 里用的一模一样
 sys.path.insert(0, r"C:\Python27\Lib\site-packages") 
 
-
-import sys
 import time
 import json
 import urllib2
@@ -511,6 +509,13 @@ def main():
         help="本地 Broker 端口（默认: 0 表示自动分配）"
     )
 
+    parser.add_argument(
+        "--stage-sync-url",
+        type=str,
+        default="",
+        help="可选：阶段同步 URL（例如 http://127.0.0.1:8780/api/status）"
+    )
+
     args = parser.parse_args()
 
     # 打印配置信息
@@ -561,6 +566,15 @@ def main():
     try:
         while True:
             time.sleep(0.5)  # 每0.5秒检查一次
+            if args.stage_sync_url:
+                try:
+                    r = urllib2.urlopen(args.stage_sync_url, timeout=1.0)
+                    data = json.loads(r.read())
+                    target_stage = (((data or {}).get('session') or {}).get('current_stage') or '').strip()
+                    if target_stage and target_stage != gaze_pusher_instance.current_stage:
+                        gaze_pusher_instance.set_stage(target_stage)
+                except Exception:
+                    pass
             gaze_pusher_instance.update_and_push()
     except KeyboardInterrupt:
         print("\n[INFO] 收到停止信号")

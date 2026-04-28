@@ -72,6 +72,14 @@ import urllib2
 import argparse
 from naoqi import ALProxy, ALBroker, ALModule
 
+
+DEFAULT_VOCABULARY = [
+    u"是的", u"不是", u"好的", u"明白", u"继续", u"谢谢", u"可以", u"嗯", u"好",
+    u"项目", u"开发", u"团队", u"负责", u"完成", u"学习", u"经验", u"能力", u"挑战", u"解决",
+    u"实习", u"研究", u"课程", u"算法", u"系统", u"测试", u"优化", u"设计", u"协作", u"沟通",
+    u"目标", u"计划", u"问题", u"困难", u"成长", u"改进", u"时间", u"压力", u"反馈", u"总结",
+]
+
 # ============================================================================
 # 全局变量（用于 NAOqi 回调机制）
 # ============================================================================
@@ -91,7 +99,7 @@ class ASRRealtimePusher(ALModule):
     - 我们在回调中将结果推送到 Python3 客户端
     """
 
-    def __init__(self, name, robot_ip, robot_port, client_url, current_stage):
+    def __init__(self, name, robot_ip, robot_port, client_url, current_stage, vocabulary=None):
         """初始化 ASR 推送器
 
         Args:
@@ -107,6 +115,7 @@ class ASRRealtimePusher(ALModule):
         self.robot_port = robot_port
         self.client_url = client_url
         self.current_stage = current_stage
+        self.vocabulary = list(vocabulary or DEFAULT_VOCABULARY)
 
         # 连接到 NAO 的语音识别服务
         try:
@@ -133,6 +142,8 @@ class ASRRealtimePusher(ALModule):
         self.push_success_count = 0
         self.push_fail_count = 0
         self.last_recognition_time = 0
+        self.last_heartbeat_time = 0
+        self.heartbeat_interval_s = 2.0
 
     def _setup_speech_recognition(self):
         """配置语音识别参数
@@ -149,19 +160,14 @@ class ASRRealtimePusher(ALModule):
             # 设置词汇表（开放式识别，不限定特定词汇）
             # 注意：NAO 的中文识别可能需要预定义词汇表
             # 如果需要开放式识别，可能需要使用 ALSoundExtractor
-            vocabulary = [
-                u"是的", u"不是", u"好的", u"明白", u"继续",
-                u"项目", u"开发", u"团队", u"负责", u"完成",
-                u"学习", u"经验", u"能力", u"挑战", u"解决"
-            ]
-            self.asr_proxy.setVocabulary(vocabulary, False)
+            self.asr_proxy.setVocabulary(self.vocabulary, False)
 
             # 设置识别参数
             # AudioExpression: 0.0-1.0，越高越敏感
             self.asr_proxy.setAudioExpression(0.6)
 
             print("[INFO] 语音识别配置完成")
-            print("[INFO] 词汇表大小: %d" % len(vocabulary))
+            print("[INFO] 词汇表大小: %d" % len(self.vocabulary))
 
         except Exception as e:
             print("[WARN] 语音识别配置失败: %s" % str(e))
@@ -274,6 +280,27 @@ class ASRRealtimePusher(ALModule):
             print("[ERROR] 推送异常: %s" % str(e))
             return False
 
+    def maybe_push_heartbeat(self):
+        """按固定频率发送 ASR 心跳，避免前端误判断连。"""
+        now = time.time()
+        if (now - self.last_heartbeat_time) < self.heartbeat_interval_s:
+            return
+
+        payload = {
+            "text": "<heartbeat>",
+            "speech_duration_s": 0.0,
+            "confidence": 1.0,
+            "stage": self.current_stage,
+            "timestamp_ms": int(now * 1000),
+            "heartbeat": True,
+        }
+        success = self._push_to_client(payload)
+        self.last_heartbeat_time = now
+        if success:
+            print("[DEBUG] ASR 心跳推送成功")
+        else:
+            print("[WARN] ASR 心跳推送失败")
+
     def set_stage(self, stage):
         """更新当前实验阶段
 
@@ -380,6 +407,20 @@ def main():
         help="本地 Broker 端口（默认: 0 表示自动分配）"
     )
 
+    parser.add_argument(
+        "--vocab-file",
+        type=str,
+        default="",
+        help="可选：词表文件路径（utf-8，每行一个词）"
+    )
+
+    parser.add_argument(
+        "--stage-sync-url",
+        type=str,
+        default="",
+        help="可选：阶段同步 URL（例如 http://127.0.0.1:8780/api/status）"
+    )
+
     args = parser.parse_args()
 
     # 打印配置信息
@@ -405,6 +446,24 @@ def main():
         print("[ERROR] 创建 Broker 失败: %s" % str(e))
         sys.exit(1)
 
+    vocabulary = list(DEFAULT_VOCABULARY)
+    if args.vocab_file:
+        try:
+            with open(args.vocab_file, 'r') as f:
+                loaded = []
+                for line in f:
+                    token = line.strip()
+                    if token:
+                        try:
+                            loaded.append(token.decode('utf-8'))
+                        except Exception:
+                            loaded.append(token.decode('utf-8', 'ignore'))
+                if loaded:
+                    vocabulary = loaded
+                    print("[INFO] 从文件加载词表: %s (%d 词)" % (args.vocab_file, len(vocabulary)))
+        except Exception as e:
+            print("[WARN] 词表文件加载失败，使用默认词表: %s" % str(e))
+
     # 创建 ASR 推送器实例
     try:
         asr_pusher_instance = ASRRealtimePusher(
@@ -412,7 +471,8 @@ def main():
             args.robot_ip,
             args.robot_port,
             args.client_url,
-            args.stage
+            args.stage,
+            vocabulary=vocabulary
         )
         print("[INFO] ASR 推送器已创建")
     except Exception as e:
@@ -428,6 +488,16 @@ def main():
     try:
         while True:
             time.sleep(1)
+            if args.stage_sync_url:
+                try:
+                    r = urllib2.urlopen(args.stage_sync_url, timeout=1.0)
+                    data = json.loads(r.read())
+                    target_stage = (((data or {}).get('session') or {}).get('current_stage') or '').strip()
+                    if target_stage and target_stage != asr_pusher_instance.current_stage:
+                        asr_pusher_instance.set_stage(target_stage)
+                except Exception:
+                    pass
+            asr_pusher_instance.maybe_push_heartbeat()
     except KeyboardInterrupt:
         print("\n[INFO] 收到停止信号")
 

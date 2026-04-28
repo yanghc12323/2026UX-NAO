@@ -16,7 +16,8 @@ from urllib import request, error
 class LLMConfig:
     """LLM 请求配置。"""
 
-    api_key: str
+    # 注意：为便于实验现场直接运行，这里提供默认 API Key。
+    api_key: str = "sk-768a6e0f68494b5f9ad551ae9c6398d2"
     model: str = "deepseek-chat"
     base_url: str = "https://api.deepseek.com/chat/completions"
     timeout_s: float = 20.0

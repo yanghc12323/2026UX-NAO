@@ -38,7 +38,7 @@ def build_feedback_system_prompt(policy: InterviewPolicy) -> str:
 def build_question_user_prompt(stage: str, main_count: int = 4) -> str:
     """构造题目阶段用户提示词。"""
     if stage == "warmup":
-        return "请生成1条热身问题，用于让本科生实习候选人快速进入状态。"
+        return "请生成1条轻松、低压力的破冰话题，用于让本科生实习候选人放松情绪并自然开口。"
     if stage == "task_intro":
         return "请生成1段任务引导词，介绍模拟面试目的、流程、时长与作答建议。"
     if stage == "self_intro":
@@ -59,4 +59,29 @@ def build_feedback_user_prompt(answer_text: str) -> str:
         "---\n"
         "请给出：1) 一个优点；2) 一个可改进点；3) 一个可立即执行的改进建议。"
         % answer_text
+    )
+
+
+def build_warmup_chat_system_prompt(policy: InterviewPolicy) -> str:
+    """构造 warmup 轻松聊天系统提示词。"""
+    return (
+        "你是模拟面试机器人的热身聊天助手，受试者是%s。\n"
+        "目标：缓解紧张、建立安全感、鼓励表达。\n"
+        "语气：温和、支持、自然口语，不评判，不施压。\n"
+        "请输出1-2句中文：先共情/肯定，再给一个轻松追问。\n"
+        "避免使用‘面试表现建议/量化结果/STAR’等正式评估措辞。\n"
+        "保持与实验人设一致：%s；backchanneling：%s。"
+        % (policy.target_group, policy.persona_instruction(), policy.backchanneling_instruction())
+    )
+
+
+def build_warmup_chat_user_prompt(user_text: str) -> str:
+    """构造 warmup 轻松聊天用户提示词。"""
+    return (
+        "受试者刚刚说：\n"
+        "---\n"
+        "%s\n"
+        "---\n"
+        "请给出一段轻松回应（1-2句）：先简短肯定，再抛一个容易回答的小问题（如校园生活/兴趣/今天状态）。"
+        % user_text
     )

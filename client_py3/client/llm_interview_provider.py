@@ -18,6 +18,8 @@ from .prompt_templates import (
     build_feedback_user_prompt,
     build_question_system_prompt,
     build_question_user_prompt,
+    build_warmup_chat_system_prompt,
+    build_warmup_chat_user_prompt,
 )
 
 
@@ -103,6 +105,22 @@ class LLMFeedbackProvider(object):
         lines = _extract_candidate_lines(text)
         if lines:
             return " ".join(lines[:3])
+        return fallback
+
+    def warmup_reply(self, user_text: str) -> str:
+        """warmup 阶段轻松聊天回复（非评估式反馈）。"""
+        fallback = "听起来不错，我们慢慢聊就好～你今天来之前做了什么让自己放松一点的事吗？"
+        system_prompt = build_warmup_chat_system_prompt(self.policy)
+        user_prompt = build_warmup_chat_user_prompt(user_text=user_text)
+        try:
+            text = self.llm.chat_completion_text(system_prompt=system_prompt, user_prompt=user_prompt)
+        except Exception as exc:  # noqa: BLE001
+            print("[WARN] llm_warmup_provider_fallback reason=%s" % exc)
+            return fallback
+
+        lines = _extract_candidate_lines(text)
+        if lines:
+            return " ".join(lines[:2])
         return fallback
 
 
