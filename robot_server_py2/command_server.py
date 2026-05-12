@@ -122,6 +122,9 @@ def _route_gesture(name):
         "encourage_open_palm": "nod",
         "approval_nod": "nod",
         "disapproval_shake": "shake_head",
+        "pressure_arms_crossed": "arms_crossed",
+        "pressure_hands_on_hips": "hands_on_hips",
+        "thinking_chin_touch": "think_chin",
     }
     action = mapping.get(name)
     if not action:
@@ -130,6 +133,12 @@ def _route_gesture(name):
         robot_controller.nod()
     elif action == "shake_head":
         robot_controller.shake_head()
+    elif action == "arms_crossed":
+        robot_controller.arms_crossed()
+    elif action == "hands_on_hips":
+        robot_controller.hands_on_hips()
+    elif action == "think_chin":
+        robot_controller.think_chin()
     return {"gesture": name, "mapped_action": action}
 
 
@@ -153,7 +162,15 @@ def route_command(command, payload):
         text = payload.get("text", "")
         if not text:
             raise CommandError("E103", "invalid_payload_text_empty")
-        robot_controller.speak(text)
+        try:
+            robot_controller.speak(text)
+        except Exception as e:
+            emsg = str(e).lower()
+            if "timeout" in emsg:
+                raise CommandError("E300", "tts_execution_timeout")
+            if "tts" in emsg or "speech" in emsg or "altexttospeech" in emsg:
+                raise CommandError("E202", "tts_module_unavailable")
+            raise CommandError("E500", "tts_execution_failed")
         return {"command": cmd}
 
     if cmd == "nod":
@@ -166,6 +183,18 @@ def route_command(command, payload):
     if cmd == "gaze":
         mapped = _route_gaze(payload.get("target", "user"))
         return mapped
+
+    if cmd == "think_chin":
+        robot_controller.think_chin()
+        return {"command": cmd, "mapped_action": "think_chin"}
+
+    if cmd == "arms_crossed":
+        robot_controller.arms_crossed()
+        return {"command": cmd, "mapped_action": "arms_crossed"}
+
+    if cmd == "hands_on_hips":
+        robot_controller.hands_on_hips()
+        return {"command": cmd, "mapped_action": "hands_on_hips"}
 
     if cmd == "reset_posture":
         robot_controller.reset_gaze()
@@ -232,12 +261,17 @@ def route_command(command, payload):
 # ==========================================
 class RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
+        print("[DEBUG] Received POST request to: %s" % self.path)
         if self.path == '/command':
             content_length = int(self.headers.getheader('content-length', 0))
+            print("[DEBUG] Content-Length: %d" % content_length)
             post_data = self.rfile.read(content_length)
+            print("[DEBUG] Raw data received, length: %d" % len(post_data))
             try:
                 req_json = json.loads(post_data)
-            except Exception:
+                print("[DEBUG] JSON parsed successfully")
+            except Exception as e:
+                print("[ERROR] JSON parse failed: %s" % str(e))
                 resp = build_response(
                     req={"protocol_version": "1.0", "request_id": ""},
                     status="error",
@@ -251,15 +285,20 @@ class RequestHandler(BaseHTTPRequestHandler):
             req_obj = None
             started = now_ms()
             try:
+                print("[DEBUG] Normalizing request...")
                 req_obj = normalize_request(req_json)
                 command = req_obj.get("command")
                 payload = req_obj.get("payload", {})
 
+                rid = req_obj.get("request_id")
                 print("\n" + "=" * 45)
-                print("[HTTP] request_id=%s command=%s" % (req_obj.get("request_id"), command))
+                print("[HTTP][RX] request_id=%s command=%s" % (rid, command))
+                print("[DEBUG] Payload: %s" % str(payload))
 
                 # 调用上面的路由函数
+                print("[TRACE][ROUTE] request_id=%s command=%s" % (rid, command))
                 action_result = route_command(command, payload)
+                print("[TRACE][EXEC_OK] request_id=%s command=%s" % (rid, command))
                 exec_ms = max(0, now_ms() - started)
                 result = {
                     "execution_ms": exec_ms,
@@ -273,10 +312,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                     message="success",
                     result=result,
                 )
+                print("[HTTP][TX] request_id=%s status=ok error_code=E000" % rid)
                 self._send_response(200, resp)
 
             except CommandError as ce:
-                print("[ERROR] protocol_or_command_error: %s" % ce.message)
+                rid = (req_obj or {}).get("request_id", "")
+                print("[ERROR][CMD_FAIL] request_id=%s code=%s message=%s" % (rid, ce.error_code, ce.message))
                 exec_ms = max(0, now_ms() - started)
                 resp = build_response(
                     req=req_obj,
@@ -285,9 +326,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                     message=ce.message,
                     result={"execution_ms": exec_ms, "robot_state": "idle"},
                 )
+                print("[HTTP][TX] request_id=%s status=error error_code=%s" % (rid, ce.error_code))
                 self._send_response(200, resp)
             except Exception as e:
-                print("[ERROR] command_execution_exception: %s" % str(e))
+                rid = (req_obj or {}).get("request_id", "")
+                print("[ERROR][UNHANDLED] request_id=%s command_execution_exception: %s" % (rid, str(e)))
+                print("[ERROR] Exception type: %s" % type(e).__name__)
+                import traceback
+                traceback.print_exc()
                 exec_ms = max(0, now_ms() - started)
                 resp = build_response(
                     req=req_obj,
@@ -296,6 +342,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     message="internal_server_error",
                     result={"execution_ms": exec_ms, "robot_state": "idle"},
                 )
+                print("[HTTP][TX] request_id=%s status=error error_code=E500" % rid)
                 self._send_response(200, resp)
         else:
             resp = build_response(
@@ -354,14 +401,20 @@ if __name__ == '__main__':
     init_robot(robot_ip=args.robot_ip, robot_port=args.robot_port)
 
     # 2. 启动服务器监听
-    httpd = HTTPServer(('', args.port), RequestHandler)
-    print("\n==============================================")
-    print("[INFO] NAO interview control server started")
-    print("[INFO] listen_port: %d" % args.port)
-    print("[INFO] robot_endpoint: %s" % ROBOT_ENDPOINT)
-    print("[INFO] controller_mode: %s" % CONTROLLER_MODE)
-    print("==============================================\n")
     try:
+        httpd = HTTPServer(('0.0.0.0', args.port), RequestHandler)
+        print("\n==============================================")
+        print("[INFO] NAO interview control server started")
+        print("[INFO] listen_address: 0.0.0.0:%d" % args.port)
+        print("[INFO] robot_endpoint: %s" % ROBOT_ENDPOINT)
+        print("[INFO] controller_mode: %s" % CONTROLLER_MODE)
+        print("[INFO] Waiting for requests...")
+        print("==============================================\n")
         httpd.serve_forever()
     except KeyboardInterrupt:
+        print("\n[INFO] Server shutting down...")
         httpd.socket.close()
+    except Exception as e:
+        print("[ERROR] Server failed to start: %s" % str(e))
+        import traceback
+        traceback.print_exc()

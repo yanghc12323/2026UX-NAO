@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""实验 Web 控制台后端（标准库实现，零额外 Web 框架依赖）。
+"""
+NAO interview manual-control web backend (Python 3).
 
-能力概览：
-1) 主试录入被试信息 + 选择 2x2 条件；
-2) 手动切换实验阶段（warmup/task_intro/formal_interview/closing_and_questionnaire）；
-3) 接收 Python2 推送器实时数据（/asr, /gaze），并计算核心指标；
-4) 前端轮询状态；
-5) 会话结束后导出本地 Excel/CSV（优先 xlsx，缺少 openpyxl 时回退 csv）。
+设计目标：
+1) 仅保留“主试手动控制”所需链路；
+2) 移除 LLM / ASR / Gaze / 流利度计算依赖；
+3) 保留会话、阶段、条件、动作指令、导出；
+4) 保持与 robot_server_py2/command_server.py 的最小协议兼容。
 """
 
 from __future__ import annotations
@@ -14,901 +14,515 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import threading
 import time
 import uuid
+import asyncio
 from dataclasses import dataclass, field
+from http.client import RemoteDisconnected
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List, Optional
-from urllib.error import URLError, HTTPError
 from urllib import request
+from urllib.error import HTTPError, URLError
 
-from client.metrics import compute_fluency_metrics, compute_gaze_contact_ratio
-from client.interview_policy import InterviewPolicy, ConditionPolicy
-from client.llm_interview_provider import LLMQuestionProvider, LLMFeedbackProvider
-from client.llm_provider import LLMClient, LLMConfig
-
-
-STAGES = [
-    "warmup",
-    "task_intro",
-    "formal_interview",
-    "closing_and_questionnaire",
-]
-
-STAGE_ENTRY_SCRIPT = {
-    "warmup": {
-        "speak": "欢迎你来，我们先轻松聊一会儿，帮你放松一下。你最近在学校里有什么让你开心的小事吗？",
-        "nod": True,
-    },
-    "task_intro": {
-        "speak": "接下来是任务说明：你将先做1分钟自我介绍，然后回答4道行为面试题。",
-        "nod": False,
-    },
-    "formal_interview": {
-        "speak": "现在进入正式面试阶段。请先用约1分钟做自我介绍，然后我们开始行为问题。",
-        "nod": True,
-    },
-    "closing_and_questionnaire": {
-        "speak": "今天的模拟面试到这里，感谢你的参与。请继续完成后续问卷。",
-        "nod": False,
-    },
-}
-
-CONDITION_MATRIX = {
-    "C1": {"persona_style": "encouraging", "backchanneling_type": "positive", "label": "鼓励型 × 积极反馈"},
-    "C2": {"persona_style": "encouraging", "backchanneling_type": "negative", "label": "鼓励型 × 消极反馈"},
-    "C3": {"persona_style": "pressure", "backchanneling_type": "positive", "label": "压力型 × 积极反馈"},
-    "C4": {"persona_style": "pressure", "backchanneling_type": "negative", "label": "压力型 × 消极反馈"},
-}
-
-ASR_STALE_TIMEOUT_MS = 10000
-GAZE_STALE_TIMEOUT_MS = 10000
-ROBOT_HEALTH_CACHE_MS = 3000
-STAGE_SYNC_GRACE_MS = 1500
+from speech_asr.asr_service import AsrService
+from speech_asr.realtime_dialog_service import RealtimeDialogService
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def ts_compact() -> str:
+    return time.strftime("%Y%m%d_%H%M%S", time.localtime())
+
+
+STAGES = ["warmup", "introduction", "formal_interview", "closing"]
+
+
+CONDITIONS = {
+    "C1": {
+        "label": "高人格化 × 反应式附和",
+        "persona_style": "high",
+        "backchanneling_type": "reactive",
+    },
+    "C2": {
+        "label": "高人格化 × 最小附和",
+        "persona_style": "high",
+        "backchanneling_type": "minimal",
+    },
+    "C3": {
+        "label": "低人格化 × 反应式附和",
+        "persona_style": "low",
+        "backchanneling_type": "reactive",
+    },
+    "C4": {
+        "label": "低人格化 × 最小附和",
+        "persona_style": "low",
+        "backchanneling_type": "minimal",
+    },
+}
+
+
 @dataclass
-class ParticipantSession:
+class SessionState:
     session_id: str
     participant_id: str
     participant_name: str
     condition_id: str
     persona_style: str
     backchanneling_type: str
-    started_at_ms: int
-    ended_at_ms: int = 0
     current_stage: str = "warmup"
+    started_at_ms: int = field(default_factory=now_ms)
+    ended_at_ms: int = 0
     stage_history: List[dict] = field(default_factory=list)
 
 
-class DialogueOrchestrator(object):
-    """Web 侧唯一对话编排器：输入 ASR+stage+condition，输出动作与状态推进。"""
-
-    def __init__(self, send_robot_command, question_provider, feedback_provider):
-        self.send_robot_command = send_robot_command
-        self.question_provider = question_provider
-        self.feedback_provider = feedback_provider
-
-    def on_asr(self, stage: str, user_text: str, dialogue_state: dict) -> dict:
-        if stage == "warmup":
-            print(f"[DEBUG] DialogueOrchestrator.on_asr: stage=warmup, user_text={user_text[:50]}...")
-            reply = self._warmup_reply_text(
-                user_text,
-                fallback="谢谢你分享，我们先轻松聊聊～最近在学校里有没有什么让你开心的小事？",
-            )
-            print(f"[DEBUG] LLM reply generated: {reply[:50]}...")
-            resp = self.send_robot_command("speak", {"text": reply})
-            print(f"[DEBUG] Robot command response: status={resp.get('status')}")
-            return {
-                "triggered": True,
-                "actions": [{"command": "speak", "text": reply, "ok": str(resp.get("status", "")).lower() == "ok", "tag": "warmup_reply"}],
-                "next_state": dialogue_state,
-            }
-
-        if stage != "formal_interview":
-            return {"triggered": False, "reason": "stage_not_enabled", "next_state": dialogue_state}
-
-        step = str((dialogue_state or {}).get("formal_step", "formal_self_intro_wait"))
-        actions = []
-        questions = list((dialogue_state or {}).get("star_questions", []))
-        if not questions:
-            questions = self._main_questions()[:4]
-
-        if step == "formal_self_intro_wait":
-            fb = self._feedback_text(user_text, fallback="收到。建议你补充更具体的行动和量化结果。")
-            r1 = self.send_robot_command("speak", {"text": fb})
-            actions.append({"command": "speak", "text": fb, "ok": str(r1.get("status", "")).lower() == "ok", "tag": "self_intro_feedback"})
-            q1 = questions[0] if questions else "请用 STAR 结构介绍一个你主导推进并最终落地的项目经历。"
-            r2 = self.send_robot_command("speak", {"text": q1})
-            actions.append({"command": "speak", "text": q1, "ok": str(r2.get("status", "")).lower() == "ok", "tag": "star_q1"})
-            next_state = dict(dialogue_state or {})
-            next_state.update({"formal_step": "formal_star_q1_wait", "star_questions": questions, "star_index": 0})
-            return {"triggered": True, "actions": actions, "next_state": next_state}
-
-        step_map = {
-            "formal_star_q1_wait": 0,
-            "formal_star_q2_wait": 1,
-            "formal_star_q3_wait": 2,
-            "formal_star_q4_wait": 3,
-        }
-        if step in step_map:
-            idx = step_map[step]
-            fb = self._feedback_text(user_text, fallback="收到。建议你补充更具体的行动和量化结果。")
-            r1 = self.send_robot_command("speak", {"text": fb})
-            actions.append({"command": "speak", "text": fb, "ok": str(r1.get("status", "")).lower() == "ok", "tag": "star_feedback"})
-            next_idx = idx + 1
-            next_state = dict(dialogue_state or {})
-            next_state.update({"star_questions": questions, "star_index": next_idx})
-            if next_idx < min(4, len(questions)):
-                next_q = questions[next_idx]
-                r2 = self.send_robot_command("speak", {"text": next_q})
-                actions.append({"command": "speak", "text": next_q, "ok": str(r2.get("status", "")).lower() == "ok", "tag": "star_next"})
-                next_state["formal_step"] = "formal_star_q%d_wait" % (next_idx + 1)
-            else:
-                done_text = "正式问答部分已完成。请等待主试进入结束阶段。"
-                r3 = self.send_robot_command("speak", {"text": done_text})
-                actions.append({"command": "speak", "text": done_text, "ok": str(r3.get("status", "")).lower() == "ok", "tag": "formal_done"})
-                next_state["formal_step"] = "formal_done"
-            return {"triggered": True, "actions": actions, "next_state": next_state}
-
-        return {"triggered": False, "reason": "no_transition", "next_state": dialogue_state}
-
-    def _main_questions(self):
-        if self.question_provider is None:
-            return []
-        return self.question_provider.get_main_questions()
-
-    def _feedback_text(self, answer_text: str, fallback: str) -> str:
-        if self.feedback_provider is None:
-            return fallback
-        try:
-            return self.feedback_provider.feedback_for_answer(answer_text)
-        except Exception:
-            return fallback
-
-    def _warmup_reply_text(self, user_text: str, fallback: str) -> str:
-        print(f"[DEBUG] _warmup_reply_text called, provider={self.feedback_provider}")
-        if self.feedback_provider is None:
-            print("[DEBUG] No feedback_provider, using fallback")
-            return fallback
-        try:
-            # 若提供器支持 warmup 轻松聊天回复，则优先使用。
-            if hasattr(self.feedback_provider, "warmup_reply"):
-                print("[DEBUG] Calling feedback_provider.warmup_reply()")
-                reply = self.feedback_provider.warmup_reply(user_text)
-                print(f"[DEBUG] Got reply from LLM: {reply[:50]}...")
-                return reply
-            print("[DEBUG] No warmup_reply method, using feedback_for_answer")
-            return self.feedback_provider.feedback_for_answer(user_text)
-        except Exception as e:
-            print(f"[DEBUG] Exception in _warmup_reply_text: {e}")
-            return fallback
-
-
 class ExperimentState(object):
-    """线程安全的实验状态容器。"""
-
     def __init__(self, export_dir: str, robot_server_url: str):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.export_dir = export_dir
         self.robot_server_url = robot_server_url
+        self.session: Optional[SessionState] = None
+        self.action_logs: List[dict] = []
 
-        self.session: Optional[ParticipantSession] = None
-        self.latest_gaze_by_stage: Dict[str, dict] = {}
-        self.stage_gaze_offset_by_stage: Dict[str, float] = {}
-        self.latest_raw_gaze_total_s: float = 0.0
-        self.latest_metrics: Optional[dict] = None
-        self.metric_events: List[dict] = []
-        self.asr_events: List[dict] = []
-        self.gaze_events: List[dict] = []
-        self.last_asr_received_at_ms: int = 0
-        self.last_gaze_received_at_ms: int = 0
-        self.stage_changed_at_ms: int = 0
-        self.stage_version: int = 0
-        self._robot_health_cache: dict = {
-            "checked_at_ms": 0,
-            "ok": False,
-            "message": "not_checked",
-        }
-        self.dialogue_state: Dict[str, object] = {
-            "formal_step": "formal_self_intro_wait",
-            "star_questions": [],
-            "star_index": 0,
-            "self_intro_prompt": "",
-        }
+        os.makedirs(self.export_dir, exist_ok=True)
 
-        # LLM 组件：失败时自动回退，不中断实验流程。
-        self._llm = LLMClient(LLMConfig())
-        self._question_provider: Optional[LLMQuestionProvider] = None
-        self._feedback_provider: Optional[LLMFeedbackProvider] = None
-        self._llm_prewarm_done: bool = False
-        self._llm_prewarm_status: dict = {"ok": False, "message": "not_started", "timestamp_ms": 0}
-
-    def _build_policy_from_condition(self, condition_id: str) -> InterviewPolicy:
-        cp = ConditionPolicy.from_condition_id(condition_id)
-        return cp.to_interview_policy()
-
+    # ------------------------
+    # 会话与阶段
+    # ------------------------
     def start_session(self, participant_id: str, participant_name: str, condition_id: str) -> dict:
-        condition = CONDITION_MATRIX.get(condition_id)
-        if not condition:
+        if not participant_id:
+            raise ValueError("participant_id_required")
+        if not participant_name:
+            raise ValueError("participant_name_required")
+        if condition_id not in CONDITIONS:
             raise ValueError("invalid_condition_id")
-        if not participant_id.strip():
-            raise ValueError("empty_participant_id")
-        if not participant_name.strip():
-            raise ValueError("empty_participant_name")
 
-        sid = "S_%s" % uuid.uuid4().hex[:10].upper()
-        created = ParticipantSession(
+        cond = CONDITIONS[condition_id]
+        sid = "S_%s_%s" % (ts_compact(), uuid.uuid4().hex[:6].upper())
+        s = SessionState(
             session_id=sid,
-            participant_id=participant_id.strip(),
-            participant_name=participant_name.strip(),
+            participant_id=participant_id,
+            participant_name=participant_name,
             condition_id=condition_id,
-            persona_style=condition["persona_style"],
-            backchanneling_type=condition["backchanneling_type"],
-            started_at_ms=now_ms(),
+            persona_style=cond["persona_style"],
+            backchanneling_type=cond["backchanneling_type"],
         )
-        created.stage_history.append({"stage": created.current_stage, "timestamp_ms": now_ms(), "source": "session_start"})
+        s.stage_history.append({"stage": s.current_stage, "timestamp_ms": now_ms(), "source": "session_start"})
 
         with self._lock:
-            # 保留会话启动前最近一次 ASR/Gaze 心跳时间，避免“开始会话”瞬间把连接状态清零，
-            # 导致前端立刻误报 ASR/GAZE 断开。
-            preserved_last_asr_ms = self.last_asr_received_at_ms
-            preserved_last_gaze_ms = self.last_gaze_received_at_ms
+            self.session = s
+            self.action_logs = []
 
-            self.session = created
-            self.latest_gaze_by_stage = {}
-            self.stage_gaze_offset_by_stage = {created.current_stage: 0.0}
-            self.latest_raw_gaze_total_s = 0.0
-            self.latest_metrics = None
-            self.metric_events = []
-            self.asr_events = []
-            self.gaze_events = []
-            self.last_asr_received_at_ms = preserved_last_asr_ms
-            self.last_gaze_received_at_ms = preserved_last_gaze_ms
-            self.stage_changed_at_ms = now_ms()
-            self.stage_version = 1
-            self.dialogue_state = {
-                "formal_step": "formal_self_intro_wait",
-                "star_questions": [],
-                "star_index": 0,
-                "self_intro_prompt": "",
-            }
-            policy = self._build_policy_from_condition(condition_id)
-            self._question_provider = LLMQuestionProvider(self._llm, policy=policy, main_count=4)
-            self._feedback_provider = LLMFeedbackProvider(self._llm, policy=policy)
-            self._orchestrator = DialogueOrchestrator(self.send_robot_command, self._question_provider, self._feedback_provider)
-
-        # 严格满足“启动 Web 后尽早触发 LLM API”：会话开始后立即做一次预热调用。
-        self.ensure_llm_prewarm()
-
-        return self.status()
-
-    def ensure_llm_prewarm(self) -> dict:
-        with self._lock:
-            if self._llm_prewarm_done:
-                return dict(self._llm_prewarm_status)
-
-        status = {"ok": False, "message": "unknown", "timestamp_ms": now_ms()}
-        try:
-            _ = self._llm.chat_completion_text(
-                system_prompt="你是模拟面试助手。仅回复‘预热成功’四个字。",
-                user_prompt="请回复：预热成功",
-            )
-            status = {"ok": True, "message": "llm_prewarm_success", "timestamp_ms": now_ms()}
-        except Exception as exc:  # noqa: BLE001
-            status = {"ok": False, "message": "llm_prewarm_failed:%s" % str(exc), "timestamp_ms": now_ms()}
-
-        with self._lock:
-            self._llm_prewarm_done = True
-            self._llm_prewarm_status = status
-        return dict(status)
-
-    def _condition_reactive_actions(self, stage: str) -> List[dict]:
-        with self._lock:
-            s = self.session
-        if s is None:
-            return []
-
-        actions: List[dict] = []
-
-        # backchanneling 维度：积极=更多肯定动作；消极=更少肯定/更审慎动作。
-        if s.backchanneling_type == "positive":
-            resp = self.send_robot_command("nod", {"count": 2})
-            actions.append({"command": "nod", "count": 2, "ok": str(resp.get("status", "")).lower() == "ok", "tag": "cond_positive_backchannel"})
-            resp2 = self.send_robot_command("gesture", {"name": "approval_nod"})
-            actions.append({"command": "gesture", "name": "approval_nod", "ok": str(resp2.get("status", "")).lower() == "ok", "tag": "cond_positive_gesture"})
-        else:
-            resp = self.send_robot_command("nod", {"count": 1})
-            actions.append({"command": "nod", "count": 1, "ok": str(resp.get("status", "")).lower() == "ok", "tag": "cond_negative_backchannel"})
-            resp2 = self.send_robot_command("gesture", {"name": "disapproval_shake"})
-            actions.append({"command": "gesture", "name": "disapproval_shake", "ok": str(resp2.get("status", "")).lower() == "ok", "tag": "cond_negative_gesture"})
-
-        # persona 维度：压力型在正式阶段维持更强压迫感注视；鼓励型保持中性注视。
-        if stage == "formal_interview" and s.persona_style == "pressure":
-            resp3 = self.send_robot_command("gaze", {"target": "user"})
-            actions.append({"command": "gaze", "target": "user", "ok": str(resp3.get("status", "")).lower() == "ok", "tag": "cond_pressure_gaze"})
-        elif s.persona_style == "encouraging":
-            resp3 = self.send_robot_command("gesture", {"name": "encourage_open_palm"})
-            actions.append({"command": "gesture", "name": "encourage_open_palm", "ok": str(resp3.get("status", "")).lower() == "ok", "tag": "cond_encouraging_gesture"})
-
-        return actions
+        return {"ok": True, "session": self._session_public(s)}
 
     def end_session(self) -> dict:
         with self._lock:
             if self.session is None:
-                raise ValueError("session_not_started")
+                return {"ok": False, "error": "no_active_session"}
             self.session.ended_at_ms = now_ms()
-        return self.status()
+            s = self.session
+        return {"ok": True, "session": self._session_public(s)}
 
-    def set_stage(self, stage: str) -> dict:
+    def set_stage(self, stage: str, source: str = "manual") -> dict:
+        stage = str(stage or "").strip()
         if stage not in STAGES:
             raise ValueError("invalid_stage")
         with self._lock:
             if self.session is None:
-                raise ValueError("session_not_started")
+                raise ValueError("no_active_session")
             self.session.current_stage = stage
-            self.session.stage_history.append({"stage": stage, "timestamp_ms": now_ms(), "source": "manual_switch"})
-            self.stage_changed_at_ms = now_ms()
-            self.stage_version += 1
-            if stage not in self.stage_gaze_offset_by_stage:
-                # Gaze 推送器可能按“全局累计时长”上报；切阶段时记下偏移，得到本阶段净时长。
-                self.stage_gaze_offset_by_stage[stage] = self.latest_raw_gaze_total_s
-        return self.status()
+            self.session.stage_history.append({"stage": stage, "timestamp_ms": now_ms(), "source": source})
+            s = self.session
+        return {"ok": True, "session": self._session_public(s)}
 
-    def enter_stage(self, stage: str) -> dict:
-        """切换到指定阶段，并立即下发该阶段入场动作（由 Web 完整控制流程）。"""
-        self.set_stage(stage)
-
-        script = STAGE_ENTRY_SCRIPT.get(stage, {})
-        actions = []
-
-        speak_text = str(script.get("speak", "")).strip()
-        if speak_text:
-            resp = self.send_robot_command("speak", {"text": speak_text})
-            actions.append({"command": "speak", "ok": str(resp.get("status", "")).lower() == "ok", "response": resp})
-
-        if bool(script.get("nod", False)):
-            resp = self.send_robot_command("nod", {"count": 1})
-            actions.append({"command": "nod", "ok": str(resp.get("status", "")).lower() == "ok", "response": resp})
-
-        if stage == "formal_interview":
-            # formal 子状态机：先发1分钟自我介绍提示。
-            prompt = self._get_self_intro_prompt()
-            self._set_formal_state(step="formal_self_intro_wait", self_intro_prompt=prompt, star_questions=[], star_index=0)
-            resp = self.send_robot_command("speak", {"text": prompt})
-            actions.append({"command": "speak", "ok": str(resp.get("status", "")).lower() == "ok", "response": resp, "tag": "formal_self_intro_prompt"})
-
-        if stage == "closing_and_questionnaire":
-            resp = self.send_robot_command("reset_posture", {})
-            actions.append({"command": "reset_posture", "ok": str(resp.get("status", "")).lower() == "ok", "response": resp})
-
-        # 阶段进入时按条件附加动作差异（persona × backchanneling）。
-        try:
-            actions.extend(self._condition_reactive_actions(stage=stage))
-        except Exception as exc:  # noqa: BLE001
-            actions.append({"command": "condition_actions", "ok": False, "error": str(exc)})
-
-        s = self.status()
-        s["stage_entry_actions"] = actions
-        return s
-
-    def ingest_gaze(self, payload: dict) -> dict:
-        # 以 Web 控制台当前阶段为准，确保主试切换阶段后统计口径一致。
-        stage = self._current_stage_or_default()
-        reported_stage = str(payload.get("stage", "")).strip()
-        raw_total_s = max(0.0, float(payload.get("gaze_contact_s", 0.0) or 0.0))
-        ts_ms = int(payload.get("timestamp_ms", now_ms()))
-
-        with self._lock:
-            if self.stage_changed_at_ms > 0 and ts_ms < (self.stage_changed_at_ms - STAGE_SYNC_GRACE_MS):
-                return {"ok": True, "dropped": True, "reason": "stale_before_stage_switch"}
-
-            if stage not in self.stage_gaze_offset_by_stage:
-                self.stage_gaze_offset_by_stage[stage] = raw_total_s
-
-            baseline = self.stage_gaze_offset_by_stage.get(stage, 0.0)
-            stage_gaze_s = max(0.0, raw_total_s - baseline)
-            self.latest_raw_gaze_total_s = raw_total_s
-
-            event = {
-                "stage": stage,
-                "reported_stage": reported_stage,
-                "gaze_contact_s": round(stage_gaze_s, 3),
-                "raw_gaze_contact_s": round(raw_total_s, 3),
-                "timestamp_ms": ts_ms,
-            }
-            self.latest_gaze_by_stage[stage] = event
-            self.gaze_events.append(event)
-            self.last_gaze_received_at_ms = now_ms()
-        return {"ok": True}
-
-    def ingest_asr(self, payload: dict) -> dict:
-        text = str(payload.get("text", "")).strip()
-        if not text:
-            raise ValueError("empty_asr_text")
-
-        # 心跳包只用于连通性保活，不参与实验指标计算。
-        is_heartbeat = bool(payload.get("heartbeat", False)) or text == "<heartbeat>"
-        if is_heartbeat:
-            with self._lock:
-                self.last_asr_received_at_ms = now_ms()
-            return {"ok": True, "heartbeat": True}
-
-        stage = self._current_stage_or_default()
-        print(f"[DEBUG] ingest_asr: stage={stage}, text={text[:50]}...")
-        duration = float(payload.get("speech_duration_s", 0.0) or 0.0)
-        duration = duration if duration > 0 else max(1.0, len(text) * 0.18)
-
-        with self._lock:
-            ts_ms = int(payload.get("timestamp_ms", now_ms()))
-            if self.stage_changed_at_ms > 0 and ts_ms < (self.stage_changed_at_ms - STAGE_SYNC_GRACE_MS):
-                return {"ok": True, "dropped": True, "reason": "stale_before_stage_switch"}
-
-            gaze = self.latest_gaze_by_stage.get(stage, {}).get("gaze_contact_s", 0.0)
-            fluency = compute_fluency_metrics(text, duration)
-            metrics = {
-                "timestamp_ms": ts_ms,
-                "stage": stage,
-                "text": text,
-                "speech_duration_s": round(duration, 3),
-                "gaze_contact_s": round(float(gaze), 3),
-                "speech_rate_cpm": fluency["speech_rate_cpm"],
-                "disfluency_ratio": fluency["disfluency_ratio"],
-                "pause_ratio": fluency["pause_ratio"],
-                "repetition_ratio": fluency["repetition_ratio"],
-                "self_correction_ratio": fluency["self_correction_ratio"],
-                "fluency_score": fluency["fluency_score"],
-                "gaze_contact_ratio": compute_gaze_contact_ratio(gaze, duration),
-                "source": "asr_realtime",
-            }
-            self.latest_metrics = metrics
-            self.metric_events.append(metrics)
-            self.asr_events.append({
-                "timestamp_ms": metrics["timestamp_ms"],
-                "stage": stage,
-                "text": text,
-                "speech_duration_s": round(duration, 3),
-            })
-            self.last_asr_received_at_ms = now_ms()
-
-        # 在锁外触发对话动作，避免阻塞数据写入。
-        print(f"[DEBUG] Calling _handle_dialogue_after_asr...")
-        dialogue = self._handle_dialogue_after_asr(stage=stage, user_text=text)
-        print(f"[DEBUG] Dialogue result: triggered={dialogue.get('triggered')}, reason={dialogue.get('reason')}")
-        return {"ok": True, "dialogue": dialogue}
-
-    def _set_formal_state(self, step: str, self_intro_prompt: str, star_questions: List[str], star_index: int) -> None:
-        with self._lock:
-            self.dialogue_state = {
-                "formal_step": step,
-                "self_intro_prompt": self_intro_prompt,
-                "star_questions": list(star_questions),
-                "star_index": int(star_index),
-            }
-
-    def _get_self_intro_prompt(self) -> str:
-        provider = self._question_provider
-        if provider is None:
-            return "请你用约1分钟做自我介绍，重点说明经历、优势和你期待的实习方向。"
-        return provider.get_self_intro_prompt()
-
-    def _get_main_questions(self) -> List[str]:
-        provider = self._question_provider
-        if provider is None:
-            return [
-                "请用 STAR 结构介绍一个你主导推进并最终落地的项目经历。",
-                "请回忆一次团队协作冲突，你当时如何沟通并推动问题解决？",
-                "面对高压 deadline 时，你如何安排优先级并保证交付质量？",
-                "请分享一次你快速学习新技能并应用到任务中的经历。",
-            ]
-        return provider.get_main_questions()
-
-    def _feedback_text(self, answer_text: str) -> str:
-        provider = self._feedback_provider
-        if provider is None:
-            return "收到。建议你补充更具体的行动和量化结果。"
-        return provider.feedback_for_answer(answer_text)
-
-    def _handle_dialogue_after_asr(self, stage: str, user_text: str) -> dict:
-        if not hasattr(self, "_orchestrator"):
-            print(f"[DEBUG] Creating DialogueOrchestrator, feedback_provider={self._feedback_provider}")
-            self._orchestrator = DialogueOrchestrator(self.send_robot_command, self._question_provider, self._feedback_provider)
-        try:
-            with self._lock:
-                local_state = dict(self.dialogue_state)
-            print(f"[DEBUG] Calling orchestrator.on_asr(stage={stage})")
-            result = self._orchestrator.on_asr(stage=stage, user_text=user_text, dialogue_state=local_state)
-            if bool(result.get("triggered", False)):
-                cond_actions = self._condition_reactive_actions(stage=stage)
-                result_actions = result.get("actions", [])
-                if isinstance(result_actions, list):
-                    result_actions.extend(cond_actions)
-                    result["actions"] = result_actions
-                else:
-                    result["actions"] = cond_actions
-            next_state = result.get("next_state")
-            if isinstance(next_state, dict):
-                self._set_formal_state(
-                    step=str(next_state.get("formal_step", "formal_self_intro_wait")),
-                    self_intro_prompt=str(next_state.get("self_intro_prompt", "")),
-                    star_questions=list(next_state.get("star_questions", [])),
-                    star_index=int(next_state.get("star_index", 0)),
-                )
-            return result
-        except Exception as exc:  # noqa: BLE001
-            return {"triggered": False, "reason": "dialogue_error:%s" % str(exc)}
-
-    def status(self) -> dict:
-        with self._lock:
-            session = None
-            if self.session is not None:
-                session = {
-                    "session_id": self.session.session_id,
-                    "participant_id": self.session.participant_id,
-                    "participant_name": self.session.participant_name,
-                    "condition_id": self.session.condition_id,
-                    "persona_style": self.session.persona_style,
-                    "backchanneling_type": self.session.backchanneling_type,
-                    "started_at_ms": self.session.started_at_ms,
-                    "ended_at_ms": self.session.ended_at_ms,
-                    "current_stage": self.session.current_stage,
-                    "stage_history": list(self.session.stage_history),
-                }
-
-            avg = self._aggregate_metrics_locked()
-            latest_asr = self.asr_events[-1] if self.asr_events else None
-            latest_gaze = self.gaze_events[-1] if self.gaze_events else None
-            recent_metrics = self.metric_events[-20:]
-            last_asr_ms = self.last_asr_received_at_ms
-            last_gaze_ms = self.last_gaze_received_at_ms
-
-            result = {
-                "ok": True,
-                "session": session,
-                "conditions": CONDITION_MATRIX,
-                "stages": STAGES,
-                "latest_metrics": self.latest_metrics,
-                "latest_asr": latest_asr,
-                "latest_gaze": latest_gaze,
-                "recent_metrics": recent_metrics,
-                "aggregate_metrics": avg,
-                "aggregate_metrics_by_stage": self._aggregate_metrics_by_stage_locked(),
-                "counts": {
-                    "metric_events": len(self.metric_events),
-                    "asr_events": len(self.asr_events),
-                    "gaze_events": len(self.gaze_events),
-                },
-                "dialogue_state": dict(self.dialogue_state),
-                "llm_prewarm": dict(self._llm_prewarm_status),
-            }
-
-        result["connectivity"] = self._build_connectivity(last_asr_ms=last_asr_ms, last_gaze_ms=last_gaze_ms)
-        return result
-
-    def export_session(self) -> dict:
-        with self._lock:
-            if self.session is None:
-                raise ValueError("session_not_started")
-            snapshot = {
-                "session": self.session,
-                "metric_events": list(self.metric_events),
-                "asr_events": list(self.asr_events),
-                "gaze_events": list(self.gaze_events),
-                "aggregate": self._aggregate_metrics_locked(),
-                "aggregate_by_stage": self._aggregate_metrics_by_stage_locked(),
-            }
-
-        if not os.path.isdir(self.export_dir):
-            os.makedirs(self.export_dir)
-
-        base_name = "%s_%s" % (snapshot["session"].participant_id or "P_UNKNOWN", snapshot["session"].session_id)
-        xlsx_path = os.path.join(self.export_dir, "%s.xlsx" % base_name)
-        csv_path = os.path.join(self.export_dir, "%s.csv" % base_name)
-
-        try:
-            self._export_xlsx(snapshot, xlsx_path)
-            return {"ok": True, "file_path": xlsx_path, "file_type": "xlsx"}
-        except Exception:
-            self._export_csv(snapshot, csv_path)
-            return {
-                "ok": True,
-                "file_path": csv_path,
-                "file_type": "csv",
-                "note": "openpyxl_unavailable_or_xlsx_failed_fallback_to_csv",
-            }
-
-    def send_robot_command(self, command_name: str, payload: dict) -> dict:
-        with self._lock:
-            session = self.session
-
-        req = {
+    # ------------------------
+    # 机器人命令
+    # ------------------------
+    def send_robot_command(self, command: str, payload: dict, label: str = "") -> dict:
+        body = {
             "protocol_version": "1.0",
-            "request_id": "REQ_%s" % uuid.uuid4().hex[:12],
+            "request_id": "WEB_%s" % uuid.uuid4().hex[:12].upper(),
             "timestamp_ms": now_ms(),
-            "session_id": session.session_id if session else "web_console_session",
-            "participant_id": session.participant_id if session else "web_console_participant",
-            "condition_id": session.condition_id if session else "web_console_condition",
-            "turn_id": "WEB%03d" % (len(self.metric_events) + 1),
-            "command": command_name,
+            "command": str(command),
             "payload": payload or {},
-            "timeout_ms": 5000,
+            "timeout_ms": 15000 if command == "speak" else 5000,
             "retry_count": 0,
         }
-        body = json.dumps(req, ensure_ascii=False).encode("utf-8")
-        print(f"[DEBUG] Sending robot command: {command_name}, payload={payload}")
-        try:
-            http_req = request.Request(
-                url=self.robot_server_url,
-                data=body,
-                method="POST",
+        if self.session is not None:
+            body["session_id"] = self.session.session_id
+            body["participant_id"] = self.session.participant_id
+            body["condition_id"] = self.session.condition_id
+
+        started = now_ms()
+        stage = self.session.current_stage if self.session else "no_session"
+        log_item = {
+            "timestamp_ms": started,
+            "stage": stage,
+            "label": label or "",
+            "command": str(command),
+            "payload": payload or {},
+            "status": "error",
+            "message": "",
+            "response": None,
+            "latency_ms": 0,
+        }
+
+        # 最小化稳定性增强：对“连接被对端关闭/瞬时拒绝/超时”做 1 次短重试。
+        # speak 保持更长超时；其余命令保持短超时。
+        attempts = 2
+        timeout_s = 20.0 if command == "speak" else 6.0
+        retryable_errno = {10053, 10054, 10060, 10061}
+        last_exc = None
+
+        def _is_retryable(exc: Exception) -> bool:
+            if isinstance(exc, (RemoteDisconnected, TimeoutError, socket.timeout)):
+                return True
+            if isinstance(exc, URLError):
+                reason = getattr(exc, "reason", None)
+                if isinstance(reason, socket.timeout):
+                    return True
+                winerr = getattr(reason, "winerror", None)
+                if winerr in retryable_errno:
+                    return True
+                if isinstance(reason, OSError) and getattr(reason, "errno", None) in retryable_errno:
+                    return True
+                txt = str(reason).lower() if reason is not None else str(exc).lower()
+                for key in ["timed out", "remote end closed", "connection reset", "connection aborted", "connection refused"]:
+                    if key in txt:
+                        return True
+            return False
+
+        def _post_once(body_dict: dict, timeout_seconds: float) -> dict:
+            req = request.Request(
+                self.robot_server_url,
+                data=json.dumps(body_dict, ensure_ascii=False).encode("utf-8"),
                 headers={"Content-Type": "application/json; charset=utf-8"},
             )
-            with request.urlopen(http_req, timeout=6.0) as resp:
+            with request.urlopen(req, timeout=timeout_seconds) as resp:
                 raw = resp.read().decode("utf-8")
-            result = json.loads(raw)
-            print(f"[DEBUG] Robot response: status={result.get('status')}, message={result.get('message')}")
-            return result
-        except Exception as e:
-            print(f"[DEBUG] Robot command failed: {e}")
-            return {"status": "error", "message": str(e)}
+            return json.loads(raw)
 
-    def _build_connectivity(self, last_asr_ms: int, last_gaze_ms: int) -> dict:
-        now = now_ms()
-        asr_age = None if last_asr_ms <= 0 else max(0, now - last_asr_ms)
-        gaze_age = None if last_gaze_ms <= 0 else max(0, now - last_gaze_ms)
+        def _compat_fallback(orig_cmd: str, orig_payload: dict, req_body: dict) -> Optional[dict]:
+            """
+            当现场误连旧版 command_server（不识别新命令）时，做一次最小兼容回退。
+            仅在明确 invalid_command_* 时触发，避免影响正常链路。
+            """
+            c = str(orig_cmd or "")
+            fallback = None
+            if c == "think_chin":
+                fallback = {"command": "gesture", "payload": {"name": "thinking_chin_touch"}}
+            elif c == "arms_crossed":
+                fallback = {"command": "gesture", "payload": {"name": "pressure_arms_crossed"}}
+            elif c == "hands_on_hips":
+                fallback = {"command": "gesture", "payload": {"name": "pressure_hands_on_hips"}}
+            elif c == "gaze" and str((orig_payload or {}).get("target", "")).lower() in ["away", "down_left", "down_right"]:
+                # 兼容非常旧的实现：仅支持 legacy avert_gaze。
+                fallback = {"command": "avert_gaze", "payload": {}}
+            if not fallback:
+                return None
 
-        asr_ok = (asr_age is not None) and (asr_age <= ASR_STALE_TIMEOUT_MS)
-        gaze_ok = (gaze_age is not None) and (gaze_age <= GAZE_STALE_TIMEOUT_MS)
-        robot_health = self._get_robot_server_health()
+            fb_body = dict(req_body)
+            fb_body["command"] = fallback["command"]
+            fb_body["payload"] = fallback.get("payload", {})
+            fb_data = _post_once(fb_body, timeout_s)
+            if isinstance(fb_data, dict):
+                fb_data.setdefault("compat", {})
+                fb_data["compat"] = {
+                    "fallback_used": True,
+                    "from_command": c,
+                    "to_command": fallback["command"],
+                }
+            return fb_data
 
-        warnings = []
-        if not asr_ok:
-            warnings.append("ASR 推送未连接或已超时，请检查 asr_realtime_pusher.py 与 /asr URL")
-        if not gaze_ok:
-            warnings.append("Gaze 推送未连接或已超时，请检查 gaze_realtime_pusher.py 与 /gaze URL")
-        if not robot_health.get("ok", False):
-            warnings.append("机器人 command_server 不可达，请检查 robot_server_py2/command_server.py")
+        try:
+            for i in range(attempts):
+                try:
+                    data = _post_once(body, timeout_s)
+                    status = str(data.get("status", "")).lower()
 
-        return {
-            "asr": {
-                "ok": asr_ok,
-                "last_received_at_ms": last_asr_ms or None,
-                "age_ms": asr_age,
-                "stale_timeout_ms": ASR_STALE_TIMEOUT_MS,
-            },
-            "gaze": {
-                "ok": gaze_ok,
-                "last_received_at_ms": last_gaze_ms or None,
-                "age_ms": gaze_age,
-                "stale_timeout_ms": GAZE_STALE_TIMEOUT_MS,
-            },
-            "command_server": robot_health,
-            "warnings": warnings,
-        }
+                    # 命令可达但不识别：现场常见于“启动了旧版 Python2 command_server”。
+                    # 这里做一次兼容回退，降低调试阻塞。
+                    if status != "ok":
+                        err_msg = str(data.get("message", ""))
+                        err_code = str(data.get("error_code", ""))
+                        if err_code == "E102" and err_msg.startswith("invalid_command_"):
+                            fb = _compat_fallback(command, payload or {}, body)
+                            if fb is not None:
+                                data = fb
+                                status = str(data.get("status", "")).lower()
 
-    def _get_robot_server_health(self) -> dict:
-        now = now_ms()
-        with self._lock:
-            cached = dict(self._robot_health_cache)
+                    log_item["status"] = "ok" if status == "ok" else "error"
+                    msg = str(data.get("message", ""))
+                    if i > 0:
+                        msg = "retried_%d;%s" % (i, msg)
+                    if isinstance(data, dict) and data.get("compat", {}).get("fallback_used"):
+                        c = data.get("compat", {})
+                        msg = "compat_fallback:%s->%s;%s" % (
+                            str(c.get("from_command", "")),
+                            str(c.get("to_command", "")),
+                            msg,
+                        )
+                    log_item["message"] = msg
+                    log_item["response"] = data
+                    return data
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    if i < attempts - 1 and _is_retryable(exc):
+                        time.sleep(0.2)
+                        continue
+                    raise
+        except (HTTPError, URLError) as exc:
+            log_item["message"] = "network_error:%s" % str(exc)
+            return {
+                "status": "error",
+                "error_code": "E_NET",
+                "message": log_item["message"],
+                "result": {},
+            }
+        except Exception as exc:  # noqa: BLE001
+            if last_exc is not None:
+                log_item["message"] = "command_failed:%s" % str(last_exc)
+            else:
+                log_item["message"] = "command_failed:%s" % str(exc)
+            return {
+                "status": "error",
+                "error_code": "E_FAIL",
+                "message": log_item["message"],
+                "result": {},
+            }
+        finally:
+            log_item["latency_ms"] = max(0, now_ms() - started)
+            with self._lock:
+                self.action_logs.append(log_item)
+                if len(self.action_logs) > 3000:
+                    self.action_logs = self.action_logs[-3000:]
 
-        checked_at = int(cached.get("checked_at_ms", 0) or 0)
-        if (now - checked_at) <= ROBOT_HEALTH_CACHE_MS:
-            return cached
-
-        fresh = self._probe_robot_server()
-        with self._lock:
-            self._robot_health_cache = fresh
-        return fresh
-
-    def _probe_robot_server(self) -> dict:
-        req = {
+    def command_server_health(self) -> dict:
+        checked_at = now_ms()
+        body = {
             "protocol_version": "1.0",
-            "request_id": "HEALTH_%s" % uuid.uuid4().hex[:10],
-            "timestamp_ms": now_ms(),
-            "session_id": "web_console_health",
-            "participant_id": "web_console_health",
-            "condition_id": "web_console_health",
-            "turn_id": "HEALTH",
+            "request_id": "WEB_HEALTH_%s" % uuid.uuid4().hex[:8].upper(),
+            "timestamp_ms": checked_at,
             "command": "ping",
             "payload": {},
-            "timeout_ms": 1200,
+            "timeout_ms": 2500,
             "retry_count": 0,
         }
-
-        body = json.dumps(req, ensure_ascii=False).encode("utf-8")
-        http_req = request.Request(
-            url=self.robot_server_url,
-            data=body,
-            method="POST",
+        req = request.Request(
+            self.robot_server_url,
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json; charset=utf-8"},
         )
-
-        checked_at = now_ms()
         try:
-            with request.urlopen(http_req, timeout=1.5) as resp:
+            with request.urlopen(req, timeout=3.0) as resp:
                 raw = resp.read().decode("utf-8")
             data = json.loads(raw)
-            status = str(data.get("status", "")).lower()
-            ok = status == "ok"
-            message = "reachable" if ok else (data.get("message") or "command_server_response_error")
+            ok = str(data.get("status", "")).lower() == "ok"
             return {
                 "checked_at_ms": checked_at,
                 "ok": ok,
-                "message": str(message),
+                "message": str(data.get("message", "")),
                 "url": self.robot_server_url,
-            }
-        except (HTTPError, URLError) as exc:
-            return {
-                "checked_at_ms": checked_at,
-                "ok": False,
-                "message": "network_error:%s" % str(exc),
-                "url": self.robot_server_url,
+                "raw": data,
             }
         except Exception as exc:  # noqa: BLE001
             return {
                 "checked_at_ms": checked_at,
                 "ok": False,
-                "message": "probe_failed:%s" % str(exc),
+                "message": "health_probe_failed:%s" % str(exc),
                 "url": self.robot_server_url,
+                "raw": {},
             }
 
-    def _current_stage_or_default(self) -> str:
-        with self._lock:
-            if self.session is not None:
-                return self.session.current_stage
-        return "warmup"
+    # ------------------------
+    # 阶段脚本（可手动单步执行）
+    # ------------------------
+    def build_stage_script(self, stage: str) -> List[dict]:
+        s = self.session
+        name = (s.participant_name if s else "同学")
+        persona = (s.persona_style if s else "high")
+        backchannel = (s.backchanneling_type if s else "reactive")
 
-    def _aggregate_metrics_locked(self) -> dict:
-        if not self.metric_events:
-            return {
-                "speech_rate_cpm": 0.0,
-                "disfluency_ratio": 0.0,
-                "pause_ratio": 0.0,
-                "repetition_ratio": 0.0,
-                "self_correction_ratio": 0.0,
-                "fluency_score": 0.0,
-                "gaze_contact_ratio": 0.0,
-            }
-        n = float(len(self.metric_events))
+        encourage = "你可以慢慢来，我在认真听。" if persona == "high" else "请开始。"
+        bc_nod = 2 if backchannel == "reactive" else 1
+
+        scripts = {
+            "warmup": [
+                {
+                    "label": "热身开场",
+                    "command": "speak",
+                    "payload": {"text": "你好%s，欢迎来到模拟面试。我们先轻松聊两句。" % name},
+                },
+                {
+                    "label": "热身提问",
+                    "command": "speak",
+                    "payload": {"text": "今天天气怎么样？或者你今天心情如何？"},
+                },
+                {"label": "热身附和", "command": "nod", "payload": {"count": bc_nod}},
+            ],
+            "introduction": [
+                {
+                    "label": "介绍实验规则",
+                    "command": "speak",
+                    "payload": {
+                        "text": "接下来是实验说明：本实验包含热身、正式面试与收尾。请你自然作答，内容仅用于研究分析。"
+                    },
+                },
+                {
+                    "label": "说明阶段安排",
+                    "command": "speak",
+                    "payload": {"text": "正式阶段先进行30秒自我介绍，随后我会基于STAR法则逐个提4个问题。"},
+                },
+            ],
+            "formal_interview": [
+                {
+                    "label": "正式开场",
+                    "command": "speak",
+                    "payload": {"text": "现在进入正式面试。首先请你用30秒做一个自我介绍。%s" % encourage},
+                },
+                {"label": "Q1-S", "command": "speak", "payload": {"text": "问题一（Situation）：请描述一个你曾面对压力任务的具体情境。"}},
+                {"label": "Q1-附和", "command": "nod", "payload": {"count": bc_nod}},
+                {"label": "Q2-T", "command": "speak", "payload": {"text": "问题二（Task）：在那个情境下，你的核心目标和责任是什么？"}},
+                {"label": "Q2-附和", "command": "nod", "payload": {"count": bc_nod}},
+                {"label": "Q3-A", "command": "speak", "payload": {"text": "问题三（Action）：你具体采取了哪些行动？请尽量按步骤说明。"}},
+                {"label": "Q3-附和", "command": "nod", "payload": {"count": bc_nod}},
+                {"label": "Q4-R", "command": "speak", "payload": {"text": "问题四（Result）：最后结果如何？你从中学到了什么？"}},
+                {"label": "Q4-附和", "command": "nod", "payload": {"count": bc_nod}},
+            ],
+            "closing": [
+                {
+                    "label": "结束语",
+                    "command": "speak",
+                    "payload": {"text": "本次实验到这里结束。感谢你的参与，请联系主试填写后测问卷。"},
+                },
+                {"label": "收尾点头", "command": "nod", "payload": {"count": 1}},
+                {"label": "复位姿态", "command": "reset_posture", "payload": {}},
+            ],
+        }
+        return scripts.get(stage, [])
+
+    def execute_stage_step(self, stage: str, step_index: int) -> dict:
+        if stage not in STAGES:
+            raise ValueError("invalid_stage")
+        steps = self.build_stage_script(stage)
+        if step_index < 0 or step_index >= len(steps):
+            raise ValueError("invalid_step_index")
+        step = steps[step_index]
+        resp = self.send_robot_command(step["command"], step.get("payload", {}), label=step.get("label", ""))
         return {
-            "speech_rate_cpm": round(sum(m["speech_rate_cpm"] for m in self.metric_events) / n, 3),
-            "disfluency_ratio": round(sum(m["disfluency_ratio"] for m in self.metric_events) / n, 6),
-            "pause_ratio": round(sum(float(m.get("pause_ratio", 0.0)) for m in self.metric_events) / n, 6),
-            "repetition_ratio": round(sum(float(m.get("repetition_ratio", 0.0)) for m in self.metric_events) / n, 6),
-            "self_correction_ratio": round(sum(float(m.get("self_correction_ratio", 0.0)) for m in self.metric_events) / n, 6),
-            "fluency_score": round(sum(float(m.get("fluency_score", 0.0)) for m in self.metric_events) / n, 6),
-            "gaze_contact_ratio": round(sum(m["gaze_contact_ratio"] for m in self.metric_events) / n, 6),
+            "ok": True,
+            "stage": stage,
+            "step_index": step_index,
+            "step": step,
+            "robot_response": resp,
         }
 
-    def _aggregate_metrics_by_stage_locked(self) -> dict:
-        grouped: Dict[str, List[dict]] = {}
-        for m in self.metric_events:
-            grouped.setdefault(str(m.get("stage", "unknown")), []).append(m)
+    def execute_stage_all(self, stage: str, stop_on_error: bool = False) -> dict:
+        if stage not in STAGES:
+            raise ValueError("invalid_stage")
+        rows = []
+        for idx, step in enumerate(self.build_stage_script(stage)):
+            resp = self.send_robot_command(step["command"], step.get("payload", {}), label=step.get("label", ""))
+            ok = str(resp.get("status", "")).lower() == "ok"
+            rows.append({"step_index": idx, "step": step, "ok": ok, "robot_response": resp})
+            if stop_on_error and not ok:
+                break
+        return {"ok": True, "stage": stage, "results": rows}
 
-        out = {}
-        for stage, rows in grouped.items():
-            n = float(len(rows))
-            out[stage] = {
-                "count": int(n),
-                "speech_rate_cpm": round(sum(r["speech_rate_cpm"] for r in rows) / n, 3),
-                "disfluency_ratio": round(sum(r["disfluency_ratio"] for r in rows) / n, 6),
-                "pause_ratio": round(sum(float(r.get("pause_ratio", 0.0)) for r in rows) / n, 6),
-                "repetition_ratio": round(sum(float(r.get("repetition_ratio", 0.0)) for r in rows) / n, 6),
-                "self_correction_ratio": round(sum(float(r.get("self_correction_ratio", 0.0)) for r in rows) / n, 6),
-                "fluency_score": round(sum(float(r.get("fluency_score", 0.0)) for r in rows) / n, 6),
-                "gaze_contact_ratio": round(sum(r["gaze_contact_ratio"] for r in rows) / n, 6),
-            }
-        return out
+    # ------------------------
+    # 导出
+    # ------------------------
+    def export_session(self) -> dict:
+        with self._lock:
+            if self.session is None:
+                return {"ok": False, "error": "no_active_session"}
+            s = self.session
+            logs = list(self.action_logs)
+
+        out = os.path.join(self.export_dir, "%s_%s_manual.csv" % (s.session_id, ts_compact()))
+        self._export_csv(s, logs, out)
+        return {"ok": True, "file_type": "csv", "file_path": out}
 
     @staticmethod
-    def _export_csv(snapshot: dict, out_path: str) -> None:
+    def _export_csv(session: SessionState, logs: List[dict], out_path: str) -> None:
         import csv
 
-        session = snapshot["session"]
-        rows = snapshot["metric_events"]
         with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f)
-            writer.writerow(["session_id", session.session_id])
-            writer.writerow(["participant_id", session.participant_id])
-            writer.writerow(["participant_name", session.participant_name])
-            writer.writerow(["condition_id", session.condition_id])
-            writer.writerow(["persona_style", session.persona_style])
-            writer.writerow(["backchanneling_type", session.backchanneling_type])
-            writer.writerow([])
-            writer.writerow(["stage", "count", "avg_speech_rate_cpm", "avg_disfluency_ratio", "avg_pause_ratio", "avg_repetition_ratio", "avg_self_correction_ratio", "avg_fluency_score", "avg_gaze_contact_ratio"])
-            stage_agg = snapshot.get("aggregate_by_stage", {})
-            for stage in sorted(stage_agg.keys()):
-                row = stage_agg[stage]
-                writer.writerow([stage, row.get("count", 0), row.get("speech_rate_cpm", 0.0), row.get("disfluency_ratio", 0.0), row.get("pause_ratio", 0.0), row.get("repetition_ratio", 0.0), row.get("self_correction_ratio", 0.0), row.get("fluency_score", 0.0), row.get("gaze_contact_ratio", 0.0)])
+            w = csv.writer(f)
+            w.writerow(["session_id", session.session_id])
+            w.writerow(["participant_id", session.participant_id])
+            w.writerow(["participant_name", session.participant_name])
+            w.writerow(["condition_id", session.condition_id])
+            w.writerow(["persona_style", session.persona_style])
+            w.writerow(["backchanneling_type", session.backchanneling_type])
+            w.writerow(["started_at_ms", session.started_at_ms])
+            w.writerow(["ended_at_ms", session.ended_at_ms])
+            w.writerow([])
 
-            writer.writerow([])
-            writer.writerow(["timestamp_ms", "stage", "text", "speech_duration_s", "gaze_contact_s", "speech_rate_cpm", "disfluency_ratio", "pause_ratio", "repetition_ratio", "self_correction_ratio", "fluency_score", "gaze_contact_ratio"])
-            for r in rows:
-                writer.writerow([
+            w.writerow(["stage_history"])
+            w.writerow(["stage", "timestamp_ms", "source"])
+            for r in session.stage_history:
+                w.writerow([r.get("stage", ""), r.get("timestamp_ms", 0), r.get("source", "")])
+            w.writerow([])
+
+            w.writerow(["action_logs"])
+            w.writerow(["timestamp_ms", "stage", "label", "command", "payload", "status", "message", "latency_ms", "response"])
+            for r in logs:
+                w.writerow([
                     r.get("timestamp_ms", 0),
                     r.get("stage", ""),
-                    r.get("text", ""),
-                    r.get("speech_duration_s", 0.0),
-                    r.get("gaze_contact_s", 0.0),
-                    r.get("speech_rate_cpm", 0.0),
-                    r.get("disfluency_ratio", 0.0),
-                    r.get("pause_ratio", 0.0),
-                    r.get("repetition_ratio", 0.0),
-                    r.get("self_correction_ratio", 0.0),
-                    r.get("fluency_score", 0.0),
-                    r.get("gaze_contact_ratio", 0.0),
+                    r.get("label", ""),
+                    r.get("command", ""),
+                    json.dumps(r.get("payload", {}), ensure_ascii=False),
+                    r.get("status", ""),
+                    r.get("message", ""),
+                    r.get("latency_ms", 0),
+                    json.dumps(r.get("response", {}), ensure_ascii=False),
                 ])
 
+    # ------------------------
+    # 状态
+    # ------------------------
+    def status(self) -> dict:
+        with self._lock:
+            s = self.session
+            logs = list(self.action_logs[-50:])
+
+        stage = s.current_stage if s else "warmup"
+        return {
+            "ok": True,
+            "mode": "manual_script_only",
+            "stages": STAGES,
+            "conditions": CONDITIONS,
+            "session": self._session_public(s) if s else None,
+            "stage_script": self.build_stage_script(stage),
+            "recent_actions": logs,
+            "counts": {"action_logs": len(self.action_logs)},
+            "connectivity": {
+                "command_server": self.command_server_health(),
+                "asr": {"ok": False, "disabled": True, "message": "removed_in_manual_mode"},
+                "gaze": {"ok": False, "disabled": True, "message": "removed_in_manual_mode"},
+            },
+        }
+
     @staticmethod
-    def _export_xlsx(snapshot: dict, out_path: str) -> None:
-        from openpyxl import Workbook
-
-        session = snapshot["session"]
-        wb = Workbook()
-        ws_summary = wb.active
-        ws_summary.title = "summary"
-        ws_summary.append(["field", "value"])
-        ws_summary.append(["session_id", session.session_id])
-        ws_summary.append(["participant_id", session.participant_id])
-        ws_summary.append(["participant_name", session.participant_name])
-        ws_summary.append(["condition_id", session.condition_id])
-        ws_summary.append(["persona_style", session.persona_style])
-        ws_summary.append(["backchanneling_type", session.backchanneling_type])
-        ws_summary.append(["started_at_ms", session.started_at_ms])
-        ws_summary.append(["ended_at_ms", session.ended_at_ms])
-        ws_summary.append(["avg_speech_rate_cpm", snapshot["aggregate"]["speech_rate_cpm"]])
-        ws_summary.append(["avg_disfluency_ratio", snapshot["aggregate"]["disfluency_ratio"]])
-        ws_summary.append(["avg_pause_ratio", snapshot["aggregate"].get("pause_ratio", 0.0)])
-        ws_summary.append(["avg_repetition_ratio", snapshot["aggregate"].get("repetition_ratio", 0.0)])
-        ws_summary.append(["avg_self_correction_ratio", snapshot["aggregate"].get("self_correction_ratio", 0.0)])
-        ws_summary.append(["avg_fluency_score", snapshot["aggregate"].get("fluency_score", 0.0)])
-        ws_summary.append(["avg_gaze_contact_ratio", snapshot["aggregate"]["gaze_contact_ratio"]])
-
-        ws_stage_agg = wb.create_sheet("stage_metrics")
-        ws_stage_agg.append(["stage", "count", "avg_speech_rate_cpm", "avg_disfluency_ratio", "avg_pause_ratio", "avg_repetition_ratio", "avg_self_correction_ratio", "avg_fluency_score", "avg_gaze_contact_ratio"])
-        for stage in sorted(snapshot.get("aggregate_by_stage", {}).keys()):
-            row = snapshot["aggregate_by_stage"][stage]
-            ws_stage_agg.append([
-                stage,
-                row.get("count", 0),
-                row.get("speech_rate_cpm", 0.0),
-                row.get("disfluency_ratio", 0.0),
-                row.get("pause_ratio", 0.0),
-                row.get("repetition_ratio", 0.0),
-                row.get("self_correction_ratio", 0.0),
-                row.get("fluency_score", 0.0),
-                row.get("gaze_contact_ratio", 0.0),
-            ])
-
-        ws_metrics = wb.create_sheet("metrics")
-        ws_metrics.append(["timestamp_ms", "stage", "text", "speech_duration_s", "gaze_contact_s", "speech_rate_cpm", "disfluency_ratio", "pause_ratio", "repetition_ratio", "self_correction_ratio", "fluency_score", "gaze_contact_ratio"])
-        for row in snapshot["metric_events"]:
-            ws_metrics.append([
-                row.get("timestamp_ms", 0),
-                row.get("stage", ""),
-                row.get("text", ""),
-                row.get("speech_duration_s", 0.0),
-                row.get("gaze_contact_s", 0.0),
-                row.get("speech_rate_cpm", 0.0),
-                row.get("disfluency_ratio", 0.0),
-                row.get("pause_ratio", 0.0),
-                row.get("repetition_ratio", 0.0),
-                row.get("self_correction_ratio", 0.0),
-                row.get("fluency_score", 0.0),
-                row.get("gaze_contact_ratio", 0.0),
-            ])
-
-        ws_stage = wb.create_sheet("stage_history")
-        ws_stage.append(["stage", "timestamp_ms", "source"])
-        for h in session.stage_history:
-            ws_stage.append([h.get("stage", ""), h.get("timestamp_ms", 0), h.get("source", "")])
-
-        wb.save(out_path)
+    def _session_public(s: SessionState) -> dict:
+        return {
+            "session_id": s.session_id,
+            "participant_id": s.participant_id,
+            "participant_name": s.participant_name,
+            "condition_id": s.condition_id,
+            "persona_style": s.persona_style,
+            "backchanneling_type": s.backchanneling_type,
+            "current_stage": s.current_stage,
+            "started_at_ms": s.started_at_ms,
+            "ended_at_ms": s.ended_at_ms,
+            "stage_history": s.stage_history,
+        }
 
 
 class WebConsoleServer(object):
@@ -924,20 +538,80 @@ class WebConsoleServer(object):
         self.port = int(port)
         self.static_dir = static_dir or os.path.join(os.path.dirname(__file__), "web_console")
         self.state = ExperimentState(export_dir=export_dir, robot_server_url=robot_server_url)
+        self.asr = AsrService()
+        self.realtime = RealtimeDialogService(
+            speak_func=lambda text, label: self.state.send_robot_command("speak", {"text": text}, label=label),
+            state_provider=lambda: self.state.status(),
+        )
         self._server: Optional[ThreadingHTTPServer] = None
+        self._ws_thread: Optional[threading.Thread] = None
+        self._ws_loop = None
+        self._ws_port = self.port + 1
+        self._ws_started = False
+        self._ws_error = ""
 
-    @property
-    def web_url(self) -> str:
-        return "http://%s:%d" % (self.host, self.port)
+    def _find_available_port(self, host: str, start_port: int, max_tries: int = 20) -> int:
+        for p in range(start_port, start_port + max_tries):
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                s.bind((host, p))
+                return p
+            except OSError:
+                continue
+            finally:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+        raise OSError("no_available_ws_port_from_%d" % start_port)
+
+    def _start_realtime_ws(self) -> None:
+        def _runner():
+            try:
+                import websockets
+            except Exception:
+                print("[WARN] websockets not installed, realtime ws disabled")
+                self._ws_started = False
+                self._ws_error = "websockets_not_installed"
+                return
+
+            try:
+                selected_port = self._find_available_port(self.host, self.port + 1, max_tries=30)
+                self._ws_port = selected_port
+
+                async def _main():
+                    async with websockets.serve(self.realtime.handle_ws, self.host, self._ws_port, max_size=2**22):
+                        self._ws_started = True
+                        self._ws_error = ""
+                        if self._ws_port != self.port + 1:
+                            print("[WARN] realtime_ws_port_conflict: %d occupied, fallback to %d" % (self.port + 1, self._ws_port))
+                        print("[INFO] realtime_ws_started: ws://%s:%d/ws/realtime-dialog" % (self.host, self._ws_port))
+                        await asyncio.Future()
+
+                loop = asyncio.new_event_loop()
+                self._ws_loop = loop
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(_main())
+            except Exception as exc:  # noqa: BLE001
+                self._ws_started = False
+                self._ws_error = str(exc)
+                print("[WARN] realtime_ws_start_failed:%s" % self._ws_error)
+
+        self._ws_thread = threading.Thread(target=_runner, name="realtime-ws", daemon=True)
+        self._ws_thread.start()
 
     def start(self) -> None:
+        self._start_realtime_ws()
         self._server = ThreadingHTTPServer((self.host, self.port), self._make_handler())
         print("[INFO] web_console_started: http://%s:%d" % (self.host, self.port))
         print("[INFO] robot_server_url=%s" % self.state.robot_server_url)
         self._server.serve_forever()
 
     def _make_handler(self):
+        outer = self
         state = self.state
+        asr = self.asr
+        realtime = self.realtime
         static_dir = self.static_dir
 
         class _Handler(BaseHTTPRequestHandler):
@@ -947,7 +621,10 @@ class WebConsoleServer(object):
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
-                self.wfile.write(raw)
+                try:
+                    self.wfile.write(raw)
+                except Exception:
+                    return
 
             def _read_json(self) -> dict:
                 size = int(self.headers.get("Content-Length", "0") or 0)
@@ -955,15 +632,13 @@ class WebConsoleServer(object):
                 return json.loads(raw.decode("utf-8"))
 
             def _serve_index(self) -> None:
-                # 打开 Web 首页时立刻触发一次 LLM 预热（异步，不阻塞页面加载）。
-                threading.Thread(target=state.ensure_llm_prewarm, daemon=True).start()
                 path = os.path.join(static_dir, "index.html")
                 if not os.path.isfile(path):
                     self._send_json(404, {"ok": False, "error": "index_not_found"})
                     return
                 with open(path, "rb") as f:
                     raw = f.read()
-                self.send_response(200)
+                self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
@@ -977,37 +652,57 @@ class WebConsoleServer(object):
                     self._send_json(200, {"ok": True, "service": "web_console"})
                     return
                 if self.path == "/api/status":
-                    self._send_json(200, state.status())
+                    s = state.status()
+                    s["asr"] = asr.status()
+                    s["realtime_dialog"] = realtime.status()
+                    s["realtime_dialog"]["ws_url"] = "ws://%s:%d/ws/realtime-dialog" % (self.server.server_address[0], outer._ws_port)
+                    s["realtime_dialog"]["ws_started"] = outer._ws_started
+                    s["realtime_dialog"]["ws_error"] = outer._ws_error
+                    s["robot_action_support"] = {
+                        "web_supported_commands": [
+                            "speak",
+                            "nod",
+                            "gaze",
+                            "think_chin",
+                            "arms_crossed",
+                            "hands_on_hips",
+                            "gesture",
+                            "reset_posture",
+                            "perform_sequence",
+                            "shake_head",
+                            "stare",
+                            "avert_gaze",
+                            "rest",
+                            "ping",
+                        ],
+                        "note": "已完成代码链路检查；实机动作可用性需在机器人在线时逐项点击验证。",
+                    }
+                    self._send_json(200, s)
                     return
                 self._send_json(404, {"ok": False, "error": "not_found"})
 
             def do_POST(self):  # noqa: N802
                 try:
-                    if self.path == "/asr":
-                        payload = self._read_json()
-                        self._send_json(200, state.ingest_asr(payload))
-                        return
-
-                    if self.path == "/gaze":
-                        payload = self._read_json()
-                        self._send_json(200, state.ingest_gaze(payload))
+                    if self.path == "/asr" or self.path == "/gaze":
+                        # 手动模式下保留兼容入口，避免旧推送脚本报错。
+                        _ = self._read_json()
+                        self._send_json(200, {"ok": True, "ignored": True, "mode": "manual_script_only"})
                         return
 
                     if self.path == "/api/session/start":
                         p = self._read_json()
-                        result = state.start_session(
+                        ret = state.start_session(
                             participant_id=str(p.get("participant_id", "")).strip(),
                             participant_name=str(p.get("participant_name", "")).strip(),
                             condition_id=str(p.get("condition_id", "")).strip(),
                         )
-                        self._send_json(200, result)
+                        self._send_json(200, ret)
                         return
 
                     if self.path == "/api/session/end":
-                        result = state.end_session()
-                        export_result = state.export_session()
-                        result["export"] = export_result
-                        self._send_json(200, result)
+                        ret = state.end_session()
+                        ret["export"] = state.export_session()
+                        self._send_json(200, ret)
                         return
 
                     if self.path == "/api/session/export":
@@ -1017,25 +712,68 @@ class WebConsoleServer(object):
                     if self.path == "/api/stage":
                         p = self._read_json()
                         stage = str(p.get("stage", "")).strip()
-                        enter_now = bool(p.get("enter_now", True))
-                        result = state.enter_stage(stage) if enter_now else state.set_stage(stage)
-                        self._send_json(200, result)
+                        ret = state.set_stage(stage=stage, source="web_manual")
+                        ret["stage_script"] = state.build_stage_script(stage)
+                        self._send_json(200, ret)
+                        return
+
+                    if self.path == "/api/stage/step":
+                        p = self._read_json()
+                        stage = str(p.get("stage", "")).strip()
+                        idx = int(p.get("step_index", -1))
+                        self._send_json(200, state.execute_stage_step(stage, idx))
+                        return
+
+                    if self.path == "/api/stage/run":
+                        p = self._read_json()
+                        stage = str(p.get("stage", "")).strip()
+                        stop_on_error = bool(p.get("stop_on_error", False))
+                        self._send_json(200, state.execute_stage_all(stage, stop_on_error=stop_on_error))
                         return
 
                     if self.path == "/api/robot/command":
                         p = self._read_json()
                         cmd = str(p.get("command", "")).strip()
+                        payload = p.get("payload", {})
+                        label = str(p.get("label", "manual_command")).strip() or "manual_command"
                         if not cmd:
                             self._send_json(400, {"ok": False, "error": "missing_command"})
                             return
-                        payload = p.get("payload", {})
                         if payload is None:
                             payload = {}
                         if not isinstance(payload, dict):
                             self._send_json(400, {"ok": False, "error": "invalid_payload"})
                             return
-                        data = state.send_robot_command(cmd, payload)
+                        data = state.send_robot_command(cmd, payload, label=label)
                         self._send_json(200, {"ok": True, "robot_response": data})
+                        return
+
+                    if self.path == "/api/asr/config":
+                        p = self._read_json()
+                        self._send_json(200, asr.update_config(p))
+                        return
+
+                    if self.path == "/api/asr/start":
+                        self._send_json(200, asr.start())
+                        return
+
+                    if self.path == "/api/asr/stop":
+                        self._send_json(200, asr.stop())
+                        return
+
+                    if self.path == "/api/asr/chunk":
+                        p = self._read_json()
+                        audio_base64 = str(p.get("audio_base64", "")).strip()
+                        mime_type = str(p.get("mime_type", "audio/webm")).strip() or "audio/webm"
+                        if not audio_base64:
+                            self._send_json(400, {"ok": False, "error": "audio_base64_required"})
+                            return
+                        self._send_json(200, asr.accept_chunk(audio_base64=audio_base64, mime_type=mime_type))
+                        return
+
+                    if self.path == "/api/realtime/config":
+                        p = self._read_json()
+                        self._send_json(200, realtime.update_config(p))
                         return
 
                     self._send_json(404, {"ok": False, "error": "not_found"})
@@ -1052,7 +790,7 @@ class WebConsoleServer(object):
 
 
 def _parse_args():
-    parser = argparse.ArgumentParser(description="NAO 实验 Web 控制台")
+    parser = argparse.ArgumentParser(description="NAO 实验 Web 控制台（手动脚本模式）")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Web 服务监听地址")
     parser.add_argument("--port", type=int, default=8780, help="Web 服务监听端口")
     parser.add_argument(
@@ -1065,7 +803,7 @@ def _parse_args():
         "--export-dir",
         type=str,
         default=os.path.join(os.path.dirname(__file__), "exports"),
-        help="实验数据导出目录（xlsx/csv）",
+        help="实验数据导出目录（csv）",
     )
     parser.add_argument(
         "--static-dir",

@@ -48,6 +48,25 @@ class NaoBehaviorController(object):
             print("[ERROR] failed to connect robot (check IP/network/SDK): %s" % str(e))
             raise
 
+    def _fade_face_led_safe(self, r, g, b, duration):
+        """兼容不同 NAOqi 版本的 ALLeds.fadeRGB 签名差异，避免因 LED 调用导致动作整体失败。"""
+        try:
+            # 常见签名之一：fadeRGB(name, r, g, b, duration)
+            self.leds.fadeRGB("FaceLeds", float(r), float(g), float(b), float(duration))
+            return True
+        except Exception as e1:
+            try:
+                # 另一常见签名：fadeRGB(name, colorHex, duration)
+                rr = max(0, min(255, int(round(float(r) * 255))))
+                gg = max(0, min(255, int(round(float(g) * 255))))
+                bb = max(0, min(255, int(round(float(b) * 255))))
+                color = (rr << 16) | (gg << 8) | bb
+                self.leds.fadeRGB("FaceLeds", color, float(duration))
+                return True
+            except Exception as e2:
+                print("[WARNING] fadeRGB failed on both signatures: %s | %s" % (str(e1), str(e2)))
+                return False
+
     # ==========================================
     # 基础交互模块
     # ==========================================
@@ -104,16 +123,117 @@ class NaoBehaviorController(object):
         )
         return True
 
+    def think_chin(self):
+        """摸下巴思考动作（真实动作）：右手抬至下巴附近并短暂停留后回位"""
+        print("[ACTION] 机器人执行摸下巴思考动作")
+        names = [
+            "HeadYaw", "HeadPitch",
+            "RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll", "RWristYaw"
+        ]
+        # 说明：NAO无“手触碰”传感闭环，采用稳定可见的关节插值近似“摸下巴”动作。
+        # 阶段1：抬手靠近下巴；阶段2：短暂停留；阶段3：回到中位。
+        # 关键可调参数含义：
+        # - ShoulderPitch: 数值越小，手臂越向前上方抬起（更接近下巴）
+        # - ShoulderRoll: 右臂建议在负小角度，避免手偏到身体外侧
+        # - ElbowRoll: 数值越大，肘部弯曲越明显（手更容易贴近下巴）
+        # - ElbowYaw/WristYaw: 控制前臂与手腕朝向，决定“摸下巴”的贴合感
+        angles = [
+            [0.0, 0.0, 0.0],
+            [math.radians(8), math.radians(12), 0.0],
+            # RShoulderPitch: 下垂位 -> 靠近下巴 -> 回位
+            [math.radians(55), math.radians(18), math.radians(80)],
+            # RShoulderRoll: 轻微外展，避免手偏太外
+            [math.radians(-12), math.radians(0), 0.0],
+            # RElbowYaw: 前臂旋转，帮助手心朝向下巴
+            [math.radians(80), math.radians(100), 0.0],
+            # RElbowRoll: 肘部充分弯曲，进一步靠近下巴
+            [math.radians(78), math.radians(86), math.radians(5)],
+            # RWristYaw: 手腕内旋，增强“摸下巴”贴合感
+            [math.radians(45), math.radians(80), 0.0],
+        ]
+        times = [[0.7, 1.6, 2.6] for _ in names]
+        self.motion.angleInterpolation(names, angles, times, True)
+        return True
+
+    def arms_crossed(self):
+        """抱胸动作（优化版）：从自然下垂位直接抱胸，短停后直接回到自然下垂。"""
+        print("[ACTION] 机器人执行抱胸动作")
+        names = [
+            "LShoulderPitch", "LShoulderRoll", "LElbowYaw", "LElbowRoll",
+            "RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll",
+            "HeadPitch"
+        ]
+        # 目标：避免“先抬手再放下再抱胸”的违和路径。
+        # 直接两段：
+        #   t1 进入抱胸姿态
+        #   t2 回到自然下垂位
+        angles = [
+            # Left arm
+            [math.radians(28), math.radians(80)],
+            [math.radians(24), math.radians(10)],
+            [math.radians(-20), math.radians(-70)],
+            [math.radians(-78), math.radians(-5)],
+            # Right arm
+            [math.radians(28), math.radians(80)],
+            [math.radians(-24), math.radians(-10)],
+            [math.radians(20), math.radians(70)],
+            [math.radians(78), math.radians(5)],
+            # Head
+            [math.radians(6), 0.0],
+        ]
+        times = [[1.0, 2.2] for _ in names]
+        self.motion.angleInterpolation(names, angles, times, True)
+        return True
+
+    def hands_on_hips(self):
+        """叉腰动作（优化版）：从自然下垂位直接叉腰，短停后直接回位。"""
+        print("[ACTION] 机器人执行叉腰动作")
+        names = [
+            "LShoulderPitch", "LShoulderRoll", "LElbowYaw", "LElbowRoll",
+            "RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll",
+            "HeadPitch"
+        ]
+        # 目标：避免“先举臂再落下再叉腰”的中间轨迹。
+        # 直接两段：
+        #   t1 到达叉腰位
+        #   t2 回到自然下垂
+        # 关键可调参数含义：
+        # - ShoulderPitch: 越小手臂越前抬，越大越靠下；叉腰通常在 40~55°
+        # - ShoulderRoll: 控制手臂向身体侧面张开幅度（左右对称正负）
+        # - ElbowYaw: 控制上臂内旋/外旋，影响“手是否贴到髋侧”
+        # - ElbowRoll: 控制肘弯曲程度，过小像直臂，过大像抱胸
+        # - times: 第一段为到位速度，第二段为回位时机（停留时长=第二段-第一段）
+        angles = [
+            # Left arm
+            [math.radians(48), math.radians(80)],
+            [math.radians(16), math.radians(12)],
+            [math.radians(-32), math.radians(-70)],
+            [math.radians(-36), math.radians(-5)],
+            # Right arm
+            [math.radians(48), math.radians(80)],
+            [math.radians(-16), math.radians(-12)],
+            [math.radians(32), math.radians(70)],
+            [math.radians(36), math.radians(5)],
+            # Head
+            [math.radians(4), 0.0],
+        ]
+        times = [[0.9, 2.0] for _ in names]
+        self.motion.angleInterpolation(names, angles, times, True)
+        return True
+
     # ==========================================
     # 高压专属压迫模块 (视线与 LED)
     # ==========================================
     def stare_pressure(self):
         """压迫性死盯 (高压面试核心动作)"""
         print("[ACTION] 机器人开启压迫性死盯")
-        # 1. 头部微微下压(更具攻击性)，死死盯住正前方
-        self.motion.setAngles(["HeadYaw", "HeadPitch"], [0.0, math.radians(15)], 0.2)
-        # 2. 眼睛 LED 变红 (参数: 模块, R, G, B, 渐变时间)
-        self.leds.fadeRGB("FaceLeds", 1.0, 0.0, 0.0, 0.5)
+        # 1) 头部微微下压(更具攻击性)，死死盯住正前方
+        try:
+            self.motion.setAngles(["HeadYaw", "HeadPitch"], [0.0, math.radians(15)], 0.2)
+        except Exception as e:
+            print("[WARNING] stare setAngles failed: %s" % str(e))
+        # 2) LED 变红（兼容不同 NAOqi 签名）
+        self._fade_face_led_safe(1.0, 0.0, 0.0, 0.5)
         return True
 
     def avert_gaze(self):
@@ -122,17 +242,23 @@ class NaoBehaviorController(object):
         # 头部转向右侧且低垂
         yaw_angle = math.radians(-45)  # 向右转 45 度
         pitch_angle = math.radians(20)  # 低头 20 度
-        self.motion.setAngles(["HeadYaw", "HeadPitch"], [yaw_angle, pitch_angle], 0.2)
+        try:
+            self.motion.setAngles(["HeadYaw", "HeadPitch"], [yaw_angle, pitch_angle], 0.2)
+        except Exception as e:
+            print("[WARNING] avert_gaze setAngles failed: %s" % str(e))
         # 眼睛 LED 变暗蓝
-        self.leds.fadeRGB("FaceLeds", 0.0, 0.0, 0.5, 0.5)
+        self._fade_face_led_safe(0.0, 0.0, 0.5, 0.5)
         return True
 
     def reset_gaze(self):
         """恢复正常视线与状态"""
         print("[ACTION] 机器人恢复正常视线")
-        self.motion.setAngles(["HeadYaw", "HeadPitch"], [0.0, 0.0], 0.2)
+        try:
+            self.motion.setAngles(["HeadYaw", "HeadPitch"], [0.0, 0.0], 0.2)
+        except Exception as e:
+            print("[WARNING] reset_gaze setAngles failed: %s" % str(e))
         # 眼睛恢复默认白色
-        self.leds.fadeRGB("FaceLeds", 1.0, 1.0, 1.0, 0.5)
+        self._fade_face_led_safe(1.0, 1.0, 1.0, 0.5)
         return True
 
 

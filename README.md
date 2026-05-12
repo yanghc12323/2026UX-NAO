@@ -48,6 +48,10 @@
 - `nao_behavior_lib.py`：NAO物理行为封装
 - `asr_realtime_pusher.py`：语音识别推送器
 - `gaze_realtime_pusher.py`：视线追踪推送器
+- 已实现的关键实体动作（2026-04-29更新）：
+  - `think_chin`（摸下巴）
+  - `arms_crossed`（抱胸）
+  - `hands_on_hips`（叉腰）
 
 ---
 
@@ -141,6 +145,27 @@ python gaze_realtime_pusher.py --robot-ip 172.20.10.4 --robot-port 9559 --client
 - 接收实时数据：`POST /asr`、`POST /gaze`
 - 转发机器人命令：`POST /api/robot/command`
 
+### 常用动作命令（发送到 `/api/robot/command` 的 `command` 字段）
+
+- 基础：`speak`、`nod`、`gaze`、`reset_posture`
+- 压力/人格动作：`think_chin`、`arms_crossed`、`hands_on_hips`
+- 兼容 legacy：`shake_head`、`stare`、`avert_gaze`、`rest`
+
+补充：`gesture` 命令支持以下映射名：
+- `approval_nod`
+- `encourage_open_palm`
+- `disapproval_shake`
+- `thinking_chin_touch`
+- `pressure_arms_crossed`
+- `pressure_hands_on_hips`
+
+### 快捷动作区（Web）与实验条件联动（2026-04-29更新）
+
+- 快捷动作区已移动到左侧最上方。
+- `C1/C2`（鼓励型 persona）**不显示**“抱胸/叉腰”快捷按钮。
+- `C3/C4`（压力型 persona）显示“抱胸/叉腰”快捷按钮。
+- “摸下巴”按钮已改为直接调用 `think_chin` 实体动作（不再使用替代序列）。
+
 ---
 
 ## 6) 常见问题（FAQ）
@@ -218,21 +243,19 @@ nao_interview_coach/
 
 ---
 
-## 9) 代码审查状态
+## 9) 代码状态（持续更新）
 
-**最近审查日期**：2026年4月28日
+**最近更新日期**：2026年4月29日
 
-**审查结果**：
-- ✅ 0个严重错误
-- ✅ 所有核心功能正常
-- ✅ 错误处理完善
-- ✅ 线程安全
-- ✅ 编码处理稳健（Python2中文兼容）
+**本次新增**：
+- ✅ 新增 NAO 实体动作：`think_chin` / `arms_crossed` / `hands_on_hips`
+- ✅ `command_server.py` 已支持上述 canonical 命令与 `gesture` 映射
+- ✅ Web 快捷动作已按条件分组，压力型出现“抱胸/叉腰”，鼓励型不出现
 
-**已修复问题**：
-- 修复 `gaze_realtime_pusher.py` 重复import语句
-
-**代码质量**：良好，可安全运行
+**当前现状说明（客观）**：
+- 动作已在代码层接通至真实 NAO 关节控制（`ALMotion.angleInterpolation`）。
+- 不同 NAO 个体、站姿、关节刚度下，动作幅度可能有差异；建议在实机上微调关节角度与时间参数以达到最佳可见性。
+- 其余 ASR/Gaze/LLM 链路需按实验现场网络与服务状态持续联调验证。
 
 ---
 

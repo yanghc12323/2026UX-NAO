@@ -3,509 +3,704 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NAO 实验 Web 控制台</title>
+  <title>NAO 实验控制台</title>
   <style>
-    :root {
-      --bg: #f6f8fb;
-      --card: #fff;
-      --border: #dce3ef;
-      --text: #1c2a3a;
-      --muted: #6f7f95;
-      --primary: #2563eb;
-      --danger: #dc2626;
-      --ok: #16a34a;
-    }
-
-    body {
-      margin: 0;
-      padding: 20px;
-      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-
-    .layout {
-      max-width: 1200px;
-      margin: 0 auto;
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 14px;
-    }
-
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 14px;
-    }
-
-    h1, h2 {
-      margin: 0 0 10px;
-    }
-
-    h1 { font-size: 22px; }
-    h2 { font-size: 16px; }
-
-    .row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      margin-bottom: 10px;
-    }
-
-    label {
-      font-size: 13px;
-      color: var(--muted);
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      min-width: 180px;
-    }
-
-    input, select, button {
-      font-size: 14px;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: #fff;
-      color: var(--text);
-    }
-
-    button {
-      cursor: pointer;
-      min-width: 100px;
-    }
-
-    .primary { background: var(--primary); color: #fff; border-color: var(--primary); }
-    .danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-    .ok { background: var(--ok); color: #fff; border-color: var(--ok); }
-
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .chip {
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 6px 10px;
-      cursor: pointer;
-      background: #fff;
-      color: var(--text);
-    }
-
-    .chip.active {
-      background: #e8f0ff;
-      border-color: var(--primary);
-      color: var(--primary);
-      font-weight: 600;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 10px;
-    }
-
-    .metric {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      background: #fcfdff;
-    }
-
-    .metric .k { font-size: 12px; color: var(--muted); }
-    .metric .v { font-size: 20px; font-weight: 700; margin-top: 4px; }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-
-    th, td {
-      border-bottom: 1px solid var(--border);
-      padding: 6px;
-      text-align: left;
-      vertical-align: top;
-    }
-
-    .status {
-      font-size: 13px;
-      color: var(--muted);
-      white-space: pre-wrap;
-    }
-
-    .mono {
-      font-family: Consolas, monospace;
-      font-size: 12px;
-      word-break: break-word;
-      background: #f8fafc;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px;
-    }
-
-    .conn-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-      gap: 10px;
-      margin-bottom: 8px;
-    }
-
-    .conn-item {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      background: #fcfdff;
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      margin-left: 6px;
-    }
-
-    .badge.ok { background: #e8f8ee; color: #166534; }
-    .badge.err { background: #fdecec; color: #991b1b; }
-
-    .alert-box {
-      border: 1px solid #f3c2c2;
-      background: #fff5f5;
-      border-radius: 8px;
-      padding: 8px;
-      color: #8b1b1b;
-      font-size: 13px;
-      white-space: pre-wrap;
-    }
+    :root { --bg:#f6f8fb; --card:#fff; --bd:#dce3ef; --tx:#1c2a3a; --muted:#6f7f95; --pri:#2563eb; --ok:#16a34a; --danger:#dc2626; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:14px; background:var(--bg); color:var(--tx); font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+    .layout { max-width:1400px; margin:0 auto; display:grid; grid-template-columns:360px 1fr; gap:12px; }
+    .card { background:var(--card); border:1px solid var(--bd); border-radius:10px; padding:12px; }
+    h1,h2,h3 { margin:0 0 8px; }
+    h1 { font-size:20px; }
+    h2 { font-size:16px; }
+    h3 { font-size:14px; color:var(--muted); }
+    .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
+    label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); min-width:160px; }
+    input,select,button,textarea { border:1px solid var(--bd); border-radius:8px; padding:8px 10px; background:#fff; color:var(--tx); font-size:13px; }
+    button { cursor:pointer; }
+    .primary { background:var(--pri); border-color:var(--pri); color:#fff; }
+    .ok { background:var(--ok); border-color:var(--ok); color:#fff; }
+    .danger { background:var(--danger); border-color:var(--danger); color:#fff; }
+    .muted { color:var(--muted); font-size:12px; white-space:pre-wrap; }
+    .chips,.btns { display:flex; flex-wrap:wrap; gap:8px; }
+    .chip { border:1px solid var(--bd); border-radius:999px; padding:6px 10px; }
+    .chip.active { border-color:var(--pri); color:var(--pri); background:#e8f0ff; font-weight:600; }
+    .mono { font-family:Consolas,monospace; font-size:12px; background:#f8fafc; border:1px solid var(--bd); border-radius:8px; padding:8px; white-space:pre-wrap; }
+    .json-box { margin-bottom:8px; border:1px solid var(--bd); border-radius:8px; padding:8px; background:#fcfdff; }
+    .json-title { font-size:12px; color:var(--muted); margin-bottom:4px; }
+    .script-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:8px; }
+    .script-item { border:1px solid var(--bd); border-radius:8px; padding:8px; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th,td { border-bottom:1px solid var(--bd); padding:6px; text-align:left; vertical-align:top; word-break:break-word; }
+    textarea { width:100%; min-height:90px; resize:vertical; }
+    @media (max-width: 1080px) { .layout { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
   <div class="layout">
-    <div class="card">
-      <h1>NAO 实验 Web 控制台</h1>
-      <div class="status" id="serviceStatus">正在连接后端...</div>
-    </div>
-
-    <div class="card">
-      <h2>0) 连接状态监控</h2>
-      <div class="conn-grid" id="connectivityGrid"></div>
-      <div id="connectivityAlert" class="alert-box" style="display:none;"></div>
-    </div>
-
-    <div class="card">
-      <h2>1) 被试信息与条件配置</h2>
-      <div class="row">
-        <label>被试编号
-          <input id="participantId" placeholder="例如 P032" />
-        </label>
-        <label>姓名
-          <input id="participantName" placeholder="例如 张三" />
-        </label>
-        <label>实验条件（2×2）
-          <select id="conditionSelect"></select>
-        </label>
+    <div>
+      <div class="card">
+        <h2>快捷动作按钮（主试一键控制）</h2>
+        <div class="muted" id="quickProfile" style="margin-bottom:8px;">当前快捷配置：未选择条件</div>
+        <div class="btns" id="quickButtons"></div>
+        <div class="muted" id="quickStatus" style="margin-top:8px;">点击按钮后将直接发送到 /api/robot/command</div>
       </div>
-      <div class="row">
-        <button class="primary" id="btnStart">开始会话</button>
-        <button class="danger" id="btnEnd">结束会话并导出</button>
-        <button id="btnExport">手动导出</button>
+
+      <div class="card" style="margin-top:10px;">
+        <h2>左侧指南：控制 JSON 样例</h2>
+        <div id="jsonExamples"></div>
       </div>
-      <div class="status" id="exportStatus"></div>
     </div>
 
-    <div class="card">
-      <h2>2) 阶段控制（四阶段）</h2>
-      <div class="status">点击任一阶段按钮，即刻切换并触发该阶段入场动作（speak / nod / reset）。</div>
-      <div class="chips" id="stageChips"></div>
-      <div class="status" id="sessionSummary"></div>
-      <div class="status" id="stageActionStatus"></div>
-    </div>
+    <div>
+      <div class="card">
+        <h1>NAO 实验控制台（手动脚本模式）</h1>
+        <div class="muted" id="serviceStatus">正在连接后端...</div>
+        <div class="muted" id="connectivityStatus"></div>
+      </div>
 
-    <div class="card">
-      <h2>3) 实时指标</h2>
-      <div class="grid" id="metricsGrid"></div>
-    </div>
-
-    <div class="card">
-      <h2>4) 最近实时记录（最多20条）</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>时间戳</th>
-            <th>阶段</th>
-            <th>文本</th>
-            <th>语速</th>
-            <th>流畅性</th>
-            <th>注视比例</th>
-          </tr>
-        </thead>
-        <tbody id="recentMetricsBody"></tbody>
-      </table>
-    </div>
-
-    <div class="card">
-      <h2>5) 最近 ASR / Gaze 事件</h2>
-      <div class="row">
-        <div style="flex:1; min-width: 280px;">
-          <div class="status">latest_asr</div>
-          <div id="latestAsr" class="mono">-</div>
+      <div class="card" style="margin-top:10px;">
+        <h2>会话与条件</h2>
+        <div class="row">
+          <label>被试编号<input id="participantId" placeholder="P032" /></label>
+          <label>姓名<input id="participantName" placeholder="张三" /></label>
+          <label>条件<select id="conditionSelect"></select></label>
         </div>
-        <div style="flex:1; min-width: 280px;">
-          <div class="status">latest_gaze</div>
-          <div id="latestGaze" class="mono">-</div>
+        <div class="row">
+          <button class="primary" id="btnStart">开始会话</button>
+          <button class="danger" id="btnEnd">结束并导出</button>
+          <button id="btnExport">手动导出</button>
         </div>
+        <div class="muted" id="exportStatus"></div>
+        <div class="muted" id="sessionSummary"></div>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <h2>阶段控制</h2>
+        <div class="chips" id="stageChips"></div>
+        <div class="row" style="margin-top:8px;"><button class="ok" id="btnRunCurrentStage">执行当前阶段全部脚本</button></div>
+        <div class="muted" id="stageStatus"></div>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <h2>当前阶段脚本（单步）</h2>
+        <div class="script-grid" id="stageScript"></div>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <h2>语音识别（中文转写）</h2>
+        <div class="row">
+          <label style="min-width:260px; flex:1;">API Base
+            <input id="asrApiBase" value="https://api.openai.com/v1" />
+          </label>
+          <label style="min-width:280px; flex:1;">API Key
+            <input id="asrApiKey" type="password" placeholder="sk-..." />
+          </label>
+          <label>Model
+            <input id="asrModel" value="whisper-1" />
+          </label>
+          <label>Language
+            <input id="asrLanguage" value="zh" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="btnAsrConfig">保存 ASR 配置</button>
+          <button class="ok" id="btnAsrStart">开始语音识别</button>
+          <button class="danger" id="btnAsrStop">停止语音识别</button>
+        </div>
+        <div class="muted" id="asrStatus">未启动</div>
+        <textarea id="asrTranscript" placeholder="识别结果会显示在这里" style="min-height:140px;"></textarea>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <h2>实时对话（豆包实时语音大模型 + NAO朗读）</h2>
+        <div class="row">
+          <label style="min-width:280px; flex:1;">豆包 API Key
+            <input id="rtDoubaoKey" type="password" placeholder="Bearer Token" />
+          </label>
+          <label style="min-width:280px; flex:1;">豆包 WS URL
+            <input id="rtDoubaoUrl" value="wss://ark.cn-beijing.volces.com/api/v3/realtime" />
+          </label>
+        </div>
+        <div class="row">
+          <label style="min-width:280px; flex:1;">App ID（按官方文档）
+            <input id="rtDoubaoAppId" placeholder="可选" />
+          </label>
+          <label style="min-width:280px; flex:1;">Resource ID（按官方文档）
+            <input id="rtDoubaoResourceId" placeholder="可选" />
+          </label>
+          <label>采样率
+            <input id="rtSampleRate" value="16000" />
+          </label>
+          <label>声道
+            <input id="rtChannels" value="1" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="btnRtConfig">保存实时对话配置</button>
+          <button class="ok" id="btnRtStart">开始实时对话</button>
+          <button class="danger" id="btnRtStop">停止实时对话</button>
+          <button id="btnRtInterrupt">打断当前回答</button>
+        </div>
+        <div class="muted" id="rtStatus">未启动</div>
+        <div class="row">
+          <label style="min-width:48%; flex:1;">ASR中间结果/最终结果
+            <textarea id="rtTranscript" style="min-height:90px;"></textarea>
+          </label>
+          <label style="min-width:48%; flex:1;">LLM流式输出
+            <textarea id="rtLlmText" style="min-height:90px;"></textarea>
+          </label>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <h2>手动命令（可粘贴左侧 JSON）</h2>
+        <div class="row">
+          <label>command
+            <select id="manualCommand">
+              <option value="speak">speak</option>
+              <option value="nod">nod</option>
+              <option value="gaze">gaze</option>
+              <option value="think_chin">think_chin</option>
+              <option value="arms_crossed">arms_crossed</option>
+              <option value="hands_on_hips">hands_on_hips</option>
+              <option value="gesture">gesture</option>
+              <option value="reset_posture">reset_posture</option>
+              <option value="perform_sequence">perform_sequence</option>
+              <option value="shake_head">shake_head (legacy)</option>
+              <option value="stare">stare (legacy)</option>
+              <option value="avert_gaze">avert_gaze (legacy)</option>
+              <option value="rest">rest (legacy)</option>
+              <option value="ping">ping</option>
+            </select>
+          </label>
+          <label style="min-width:280px; flex:1;">label
+            <input id="manualLabel" value="manual_command" />
+          </label>
+        </div>
+        <div class="muted">payload (JSON object)</div>
+        <textarea id="manualPayload">{"text":"你好，我们开始吧。"}</textarea>
+        <div class="row" style="margin-top:8px;"><button id="btnManualSend">发送命令</button></div>
+        <div class="mono" id="manualResult">-</div>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <h2>最近动作日志（50条）</h2>
+        <table>
+          <thead><tr><th>时间</th><th>阶段</th><th>label</th><th>command</th><th>status</th><th>message</th><th>latency</th></tr></thead>
+          <tbody id="recentActionsBody"></tbody>
+        </table>
       </div>
     </div>
   </div>
 
   <script>
     const $ = (id) => document.getElementById(id);
-
     let latestStatus = null;
-    let pollTimer = null;
-    let lastAlertKey = '';
+    let asrRecorder = null;
+    let asrStream = null;
+    let rtWs = null;
+    let rtAudioCtx = null;
+    let rtStream = null;
+    let rtProcessor = null;
+    let rtAudioStats = { chunks: 0, bytes: 0, lastTs: 0, sampleRate: 0 };
 
-    async function api(path, method = 'GET', body = null) {
-      const resp = await fetch(path, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: body ? JSON.stringify(body) : null,
-      });
-      const data = await resp.json();
-      if (!resp.ok || data.ok === false) {
-        const err = data.error || `HTTP_${resp.status}`;
-        throw new Error(err + (data.reason ? `: ${data.reason}` : ''));
-      }
+    const EXAMPLES = [
+      { title: "说话 speak", command: "speak", payload: { text: "你好，请做30秒自我介绍。" } },
+      { title: "点头 nod", command: "nod", payload: { count: 2 } },
+      { title: "摇头 shake_head", command: "shake_head", payload: {} },
+      { title: "注视用户 gaze(user)", command: "gaze", payload: { target: "user" } },
+      { title: "回避视线 gaze(away)", command: "gaze", payload: { target: "away" } },
+      { title: "手势 gesture(approval_nod)", command: "gesture", payload: { name: "approval_nod" } },
+      { title: "复位姿态 reset_posture", command: "reset_posture", payload: {} },
+      { title: "动作序列 perform_sequence", command: "perform_sequence", payload: { stop_on_error: true, steps: [ { command: "speak", payload: { text: "我在思考。" } }, { command: "gaze", payload: { target: "away" } }, { command: "nod", payload: { count: 1 } }, { command: "gaze", payload: { target: "user" } } ] } }
+    ];
+
+    const QUICK_BASE = [
+      { text: "看向用户", command: "gaze", payload: { target: "user" }, label: "quick_gaze_user" },
+      { text: "恢复中性", command: "reset_posture", payload: {}, label: "quick_reset_posture" },
+      { text: "点头×1", command: "nod", payload: { count: 1 }, label: "quick_nod_1" },
+      { text: "移开视线", command: "gaze", payload: { target: "away" }, label: "quick_gaze_away" },
+      { text: "摸下巴", command: "think_chin", payload: {}, label: "quick_think_chin_real" }
+    ];
+
+    const QUICK_BY_CONDITION = {
+      C1: [
+        { text: "附和手势", command: "gesture", payload: { name: "approval_nod" }, label: "quick_approval" },
+        { text: "鼓励手势", command: "gesture", payload: { name: "encourage_open_palm" }, label: "quick_encourage" },
+        { text: "点头×2", command: "nod", payload: { count: 2 }, label: "quick_nod_2" }
+      ],
+      C2: [
+        { text: "点头×1", command: "nod", payload: { count: 1 }, label: "quick_nod_minimal" },
+        { text: "简短附和", command: "gesture", payload: { name: "approval_nod" }, label: "quick_minimal_approval" }
+      ],
+      C3: [
+        { text: "压迫凝视", command: "stare", payload: {}, label: "quick_stare" },
+        { text: "摇头", command: "shake_head", payload: {}, label: "quick_shake_head" },
+        { text: "回避视线", command: "avert_gaze", payload: {}, label: "quick_avert_gaze" },
+        { text: "抱胸", command: "arms_crossed", payload: {}, label: "quick_arms_crossed" },
+        { text: "叉腰", command: "hands_on_hips", payload: {}, label: "quick_hands_on_hips" }
+      ],
+      C4: [
+        { text: "压迫凝视", command: "stare", payload: {}, label: "quick_stare_low_minimal" },
+        { text: "摇头", command: "shake_head", payload: {}, label: "quick_shake_low_minimal" },
+        { text: "抱胸", command: "arms_crossed", payload: {}, label: "quick_arms_crossed_low_minimal" },
+        { text: "叉腰", command: "hands_on_hips", payload: {}, label: "quick_hands_on_hips_low_minimal" }
+      ]
+    };
+
+    function toJson(v) { try { return JSON.stringify(v ?? null, null, 2); } catch { return String(v); } }
+    function fmtTs(ms) { if (!ms) return "-"; try { return new Date(ms).toLocaleString(); } catch { return String(ms); } }
+
+    async function api(path, method='GET', body=null) {
+      const opts = { method, headers: {} };
+      if (body !== null) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+      const resp = await fetch(path, opts);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP_${resp.status}`);
       return data;
     }
 
-    function formatTs(ms) {
-      if (!ms) return '-';
-      const d = new Date(ms);
-      return d.toLocaleString();
-    }
-
-    function toJson(v) {
-      return v ? JSON.stringify(v, null, 2) : '-';
-    }
-
-    function yesNoBadge(ok) {
-      return ok
-        ? '<span class="badge ok">正常</span>'
-        : '<span class="badge err">异常</span>';
-    }
-
-    function renderConnectivity(status) {
-      const c = status.connectivity || {};
-      const asr = c.asr || {};
-      const gaze = c.gaze || {};
-      const cmd = c.command_server || {};
-      const warnings = c.warnings || [];
-
-      const rows = [
-        {
-          name: 'ASR 推送',
-          ok: !!asr.ok,
-          desc: asr.last_received_at_ms
-            ? `最后接收: ${formatTs(asr.last_received_at_ms)}\n超时阈值: ${asr.stale_timeout_ms} ms\n当前延迟: ${asr.age_ms ?? '-'} ms`
-            : '尚未收到 ASR 推送',
-        },
-        {
-          name: 'Gaze 推送',
-          ok: !!gaze.ok,
-          desc: gaze.last_received_at_ms
-            ? `最后接收: ${formatTs(gaze.last_received_at_ms)}\n超时阈值: ${gaze.stale_timeout_ms} ms\n当前延迟: ${gaze.age_ms ?? '-'} ms`
-            : '尚未收到 Gaze 推送',
-        },
-        {
-          name: 'command_server',
-          ok: !!cmd.ok,
-          desc: `检查时间: ${formatTs(cmd.checked_at_ms)}\nURL: ${cmd.url || '-'}\n信息: ${cmd.message || '-'}`,
-        },
-      ];
-
-      $('connectivityGrid').innerHTML = rows.map((r) => `
-        <div class="conn-item">
-          <div><strong>${r.name}</strong>${yesNoBadge(r.ok)}</div>
-          <div class="status">${r.desc}</div>
-        </div>
-      `).join('');
-
-      const alertBox = $('connectivityAlert');
-      if (warnings.length > 0) {
-        alertBox.style.display = 'block';
-        alertBox.textContent = `⚠ 请处理以下连接告警：\n- ${warnings.join('\n- ')}`;
-
-        const key = warnings.join('|');
-        if (key !== lastAlertKey) {
-          lastAlertKey = key;
-          alert(`连接告警:\n- ${warnings.join('\n- ')}`);
-        }
-      } else {
-        alertBox.style.display = 'none';
-        alertBox.textContent = '';
-        lastAlertKey = '';
-      }
-    }
-
-    function renderConditions(conditions) {
-      const sel = $('conditionSelect');
-      sel.innerHTML = '';
-      Object.entries(conditions).forEach(([id, c]) => {
-        const op = document.createElement('option');
-        op.value = id;
-        op.textContent = `${id} | ${c.label} | persona=${c.persona_style}, backchannel=${c.backchanneling_type}`;
-        sel.appendChild(op);
+    function renderExamples() {
+      const box = $('jsonExamples');
+      box.innerHTML = '';
+      EXAMPLES.forEach((e) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'json-box';
+        const full = { command: e.command, payload: e.payload, label: 'manual_from_guide' };
+        wrap.innerHTML = `<div class="json-title">${e.title}</div><div class="mono">${toJson(full)}</div>`;
+        const row = document.createElement('div'); row.className = 'row';
+        const copyBtn = document.createElement('button'); copyBtn.textContent = '复制 JSON';
+        copyBtn.onclick = async () => {
+          const txt = toJson(full);
+          try { await navigator.clipboard.writeText(txt); } catch {}
+          $('manualCommand').value = e.command;
+          $('manualPayload').value = toJson(e.payload);
+          $('manualLabel').value = 'manual_from_guide';
+        };
+        row.appendChild(copyBtn); wrap.appendChild(row); box.appendChild(wrap);
       });
     }
 
-    function renderStageChips(stages, currentStage) {
-      const box = $('stageChips');
+    function resolveActiveCondition(status) {
+      const sessionCid = status?.session?.condition_id;
+      if (sessionCid) return sessionCid;
+      const selected = $('conditionSelect')?.value;
+      return selected || 'C1';
+    }
+
+    async function sendQuickAction(q) {
+      if (Array.isArray(q.sequence)) {
+        let final = { status: 'ok', message: 'sequence_done' };
+        for (const step of q.sequence) {
+          const data = await api('/api/robot/command', 'POST', {
+            command: step.command,
+            payload: step.payload || {},
+            label: step.label || q.label || 'quick_sequence_step'
+          });
+          const rr = data.robot_response || {};
+          final = rr;
+          if ((rr.status || '').toLowerCase() !== 'ok') {
+            return rr;
+          }
+        }
+        return final;
+      }
+      const data = await api('/api/robot/command', 'POST', {
+        command: q.command,
+        payload: q.payload || {},
+        label: q.label || 'quick_action'
+      });
+      return data.robot_response || {};
+    }
+
+    function buildQuickActions(status) {
+      const cid = resolveActiveCondition(status);
+      return {
+        cid,
+        rows: [...QUICK_BASE, ...(QUICK_BY_CONDITION[cid] || QUICK_BY_CONDITION.C1)]
+      };
+    }
+
+    function renderQuickButtons(status = latestStatus) {
+      const box = $('quickButtons');
       box.innerHTML = '';
-      stages.forEach((stage) => {
+      const { cid, rows } = buildQuickActions(status);
+      const cond = (status?.conditions || {})[cid];
+      $('quickProfile').textContent = cond
+        ? `当前快捷配置：${cid} | ${cond.label} | persona=${cond.persona_style}, backchannel=${cond.backchanneling_type}`
+        : `当前快捷配置：${cid}`;
+
+      rows.forEach((q) => {
         const btn = document.createElement('button');
-        btn.className = 'chip' + (stage === currentStage ? ' active' : '');
-        btn.textContent = stage;
+        btn.textContent = q.text;
         btn.onclick = async () => {
           try {
-            const data = await api('/api/stage', 'POST', { stage, enter_now: true });
-            const actions = data.stage_entry_actions || [];
-            $('stageActionStatus').textContent = actions.length
-              ? `阶段入场动作：` + actions.map((a) => `${a.command}:${a.ok ? 'ok' : 'fail'}`).join(', ')
-              : '阶段已切换（未配置入场动作）';
-            renderAll(data);
+            const rr = await sendQuickAction(q);
+            $('quickStatus').textContent = `${q.text} -> ${rr.status || '-'} / ${rr.message || '-'}`;
+            await refreshStatus();
           } catch (e) {
-            alert(`阶段切换失败: ${e.message}`);
+            $('quickStatus').textContent = `${q.text} 失败: ${e.message}`;
           }
         };
         box.appendChild(btn);
       });
     }
 
-    function renderMetrics(status) {
-      const latest = status.latest_metrics || {};
-      const agg = status.aggregate_metrics || {};
-      const c = status.counts || {};
-
-      const items = [
-        ['当前阶段', status.session?.current_stage || '-'],
-        ['最近语速（cpm）', latest.speech_rate_cpm ?? '-'],
-        ['最近流畅性', latest.disfluency_ratio ?? '-'],
-        ['最近注视比例', latest.gaze_contact_ratio ?? '-'],
-        ['平均语速（cpm）', agg.speech_rate_cpm ?? 0],
-        ['平均流畅性', agg.disfluency_ratio ?? 0],
-        ['平均注视比例', agg.gaze_contact_ratio ?? 0],
-        ['ASR 条数', c.asr_events ?? 0],
-        ['Gaze 条数', c.gaze_events ?? 0],
-        ['Metric 条数', c.metric_events ?? 0],
-      ];
-
-      $('metricsGrid').innerHTML = items.map(([k, v]) => `
-        <div class="metric">
-          <div class="k">${k}</div>
-          <div class="v">${v}</div>
-        </div>`).join('');
-
-      $('latestAsr').textContent = toJson(status.latest_asr);
-      $('latestGaze').textContent = toJson(status.latest_gaze);
-    }
-
-    function renderRecentMetrics(rows) {
-      const body = $('recentMetricsBody');
-      body.innerHTML = '';
-      (rows || []).slice().reverse().forEach((r) => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${formatTs(r.timestamp_ms)}</td>
-          <td>${r.stage || '-'}</td>
-          <td>${(r.text || '').slice(0, 80)}</td>
-          <td>${r.speech_rate_cpm ?? '-'}</td>
-          <td>${r.disfluency_ratio ?? '-'}</td>
-          <td>${r.gaze_contact_ratio ?? '-'}</td>
-        `;
-        body.appendChild(tr);
+    function renderConditions(conditions) {
+      const sel = $('conditionSelect'); const prev = sel.value; sel.innerHTML = '';
+      Object.entries(conditions || {}).forEach(([id, c]) => {
+        const op = document.createElement('option');
+        op.value = id; op.textContent = `${id} | ${c.label} | persona=${c.persona_style}, backchannel=${c.backchanneling_type}`;
+        sel.appendChild(op);
       });
+      if (prev && (conditions || {})[prev]) sel.value = prev;
     }
 
     function renderSession(status) {
       const s = status.session;
-      if (!s) {
-        $('sessionSummary').textContent = '当前无会话，请先录入被试并开始。';
-        return;
-      }
+      if (!s) { $('sessionSummary').textContent = '当前无会话'; return; }
       $('sessionSummary').textContent = [
         `session_id: ${s.session_id}`,
         `participant: ${s.participant_id} / ${s.participant_name}`,
         `condition: ${s.condition_id} | persona=${s.persona_style}, backchannel=${s.backchanneling_type}`,
-        `started_at: ${formatTs(s.started_at_ms)}`,
-        `ended_at: ${s.ended_at_ms ? formatTs(s.ended_at_ms) : '-'}`,
+        `current_stage: ${s.current_stage}`,
+        `started_at: ${fmtTs(s.started_at_ms)}`
       ].join('\n');
+    }
+
+    function renderStageChips(stages, current) {
+      const box = $('stageChips'); box.innerHTML = '';
+      (stages || []).forEach((stage) => {
+        const b = document.createElement('button'); b.className = 'chip' + (stage === current ? ' active' : ''); b.textContent = stage;
+        b.onclick = async () => {
+          await api('/api/stage', 'POST', { stage });
+          $('stageStatus').textContent = `阶段已切换: ${stage}`;
+          await refreshStatus();
+        };
+        box.appendChild(b);
+      });
+    }
+
+    function renderStageScript(stage, script) {
+      const box = $('stageScript'); box.innerHTML = '';
+      (script || []).forEach((step, idx) => {
+        const div = document.createElement('div'); div.className = 'script-item';
+        div.innerHTML = `<strong>#${idx} ${step.label || '-'}</strong><div class="muted">${step.command}</div><div class="mono">${toJson(step.payload || {})}</div>`;
+        const b = document.createElement('button'); b.textContent = '执行此步';
+        b.onclick = async () => {
+          const d = await api('/api/stage/step', 'POST', { stage, step_index: idx });
+          const rr = d.robot_response || {};
+          $('stageStatus').textContent = `步骤#${idx} ${rr.status || '-'} / ${rr.message || '-'}`;
+          await refreshStatus();
+        };
+        div.appendChild(b); box.appendChild(div);
+      });
+      if ((script || []).length === 0) box.innerHTML = '<div class="muted">当前阶段无脚本</div>';
+    }
+
+    function renderRecent(rows) {
+      const body = $('recentActionsBody'); body.innerHTML = '';
+      (rows || []).slice().reverse().forEach((r) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${fmtTs(r.timestamp_ms)}</td><td>${r.stage || '-'}</td><td>${r.label || '-'}</td><td>${r.command || '-'}</td><td>${r.status || '-'}</td><td>${r.message || '-'}</td><td>${r.latency_ms ?? '-'}</td>`;
+        body.appendChild(tr);
+      });
     }
 
     function renderAll(status) {
       latestStatus = status;
-      $('serviceStatus').textContent = `后端已连接：${new Date().toLocaleTimeString()}（自动轮询 1s）`;
-      renderConnectivity(status);
+      $('serviceStatus').textContent = `后端连接正常（轮询1s） ${new Date().toLocaleTimeString()}`;
+      const cmd = status.connectivity?.command_server || {};
+      $('connectivityStatus').textContent = `command_server: ${cmd.ok ? 'OK' : 'FAIL'} | ${cmd.message || '-'} | ${cmd.url || '-'}`;
       renderConditions(status.conditions || {});
-      renderStageChips(status.stages || [], status.session?.current_stage);
-      renderMetrics(status);
-      renderRecentMetrics(status.recent_metrics || []);
+      renderQuickButtons(status);
       renderSession(status);
+      const cur = status.session?.current_stage || 'warmup';
+      renderStageChips(status.stages || [], cur);
+      renderStageScript(cur, status.stage_script || []);
+      renderRecent(status.recent_actions || []);
+
+      const asr = status.asr || {};
+      $('asrStatus').textContent = `ASR: ${asr.running ? '运行中' : '未运行'} | model=${asr.config?.model || '-'} | key_set=${asr.config?.api_key_set ? 'yes' : 'no'}`;
+      $('asrTranscript').value = asr.transcript_text || '';
+    }
+
+    async function saveAsrConfig() {
+      const payload = {
+        api_base: $('asrApiBase').value.trim(),
+        api_key: $('asrApiKey').value.trim(),
+        model: $('asrModel').value.trim() || 'whisper-1',
+        language: $('asrLanguage').value.trim() || 'zh'
+      };
+      const d = await api('/api/asr/config', 'POST', payload);
+      $('asrStatus').textContent = `ASR配置已保存 | model=${d.config?.model || '-'}`;
+    }
+
+    async function startAsrCapture() {
+      await saveAsrConfig();
+      await api('/api/asr/start', 'POST', {});
+      asrStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      asrRecorder = new MediaRecorder(asrStream, { mimeType: 'audio/webm' });
+      asrRecorder.ondataavailable = async (ev) => {
+        try {
+          if (!ev.data || ev.data.size <= 0) return;
+          const ab = await ev.data.arrayBuffer();
+          let binary = '';
+          const bytes = new Uint8Array(ab);
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          const audio_base64 = btoa(binary);
+          const d = await api('/api/asr/chunk', 'POST', { audio_base64, mime_type: ev.data.type || 'audio/webm' });
+          if (!d.ok) $('asrStatus').textContent = `ASR错误: ${d.error || 'unknown'}`;
+        } catch (e) {
+          $('asrStatus').textContent = `ASR上传失败: ${e.message}`;
+        }
+      };
+      asrRecorder.start(3000);
+      $('asrStatus').textContent = 'ASR运行中（每3秒上传音频分片）';
+    }
+
+    async function stopAsrCapture() {
+      if (asrRecorder && asrRecorder.state !== 'inactive') asrRecorder.stop();
+      if (asrStream) {
+        asrStream.getTracks().forEach(t => t.stop());
+      }
+      asrRecorder = null;
+      asrStream = null;
+      await api('/api/asr/stop', 'POST', {});
+      $('asrStatus').textContent = 'ASR已停止';
     }
 
     async function refreshStatus() {
-      const status = await api('/api/status');
-      renderAll(status);
+      const s = await api('/api/status');
+      renderAll(s);
     }
 
-    async function onStartSession() {
-      const participant_id = $('participantId').value.trim();
-      const participant_name = $('participantName').value.trim();
-      const condition_id = $('conditionSelect').value;
-      if (!participant_id || !participant_name || !condition_id) {
-        alert('请完整填写：被试编号、姓名、实验条件');
-        return;
+    function f32ToPcm16Bytes(float32Array) {
+      const out = new Int16Array(float32Array.length);
+      for (let i = 0; i < float32Array.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32Array[i]));
+        out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
       }
-      await api('/api/session/start', 'POST', { participant_id, participant_name, condition_id });
-      $('exportStatus').textContent = '会话已开始。';
-      await refreshStatus();
+      return new Uint8Array(out.buffer);
     }
 
-    async function onEndSession() {
-      const data = await api('/api/session/end', 'POST', {});
-      const exp = data.export || {};
-      $('exportStatus').textContent = `会话已结束并导出：${exp.file_type || '-'} -> ${exp.file_path || '-'}`;
-      await refreshStatus();
+    function downsampleBuffer(buffer, inRate, outRate) {
+      if (outRate === inRate) return buffer;
+      const ratio = inRate / outRate;
+      const newLen = Math.round(buffer.length / ratio);
+      const out = new Float32Array(newLen);
+      let offsetResult = 0;
+      let offsetBuffer = 0;
+      while (offsetResult < out.length) {
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+        let accum = 0, count = 0;
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) { accum += buffer[i]; count++; }
+        out[offsetResult] = accum / Math.max(1, count);
+        offsetResult++;
+        offsetBuffer = nextOffsetBuffer;
+      }
+      return out;
     }
 
-    async function onExport() {
-      const data = await api('/api/session/export', 'POST', {});
-      $('exportStatus').textContent = `导出成功：${data.file_type || '-'} -> ${data.file_path || '-'}`;
+    async function saveRealtimeConfig() {
+      const p = {
+        doubao_api_key: $('rtDoubaoKey').value.trim(),
+        doubao_ws_url: $('rtDoubaoUrl').value.trim(),
+        doubao_app_id: $('rtDoubaoAppId').value.trim(),
+        doubao_resource_id: $('rtDoubaoResourceId').value.trim(),
+        sample_rate: parseInt($('rtSampleRate').value || '16000', 10) || 16000,
+        channels: parseInt($('rtChannels').value || '1', 10) || 1,
+        enable_interim: true
+      };
+      const d = await api('/api/realtime/config', 'POST', p);
+      $('rtStatus').textContent = `配置已保存 | provider=${d.provider || '-'} | key_set=${d.config?.doubao_key_set ? 'yes' : 'no'}`;
+    }
+
+    async function startRealtimeDialog() {
+      await saveRealtimeConfig();
+      let wsUrl = '';
+      try {
+        const s = await api('/api/status');
+        wsUrl = s?.realtime_dialog?.ws_url || '';
+      } catch {}
+      if (!wsUrl) {
+        const host = location.hostname || '127.0.0.1';
+        wsUrl = `ws://${host}:${location.port ? (parseInt(location.port, 10) + 1) : 8781}/ws/realtime-dialog`;
+      }
+      rtWs = new WebSocket(wsUrl);
+      rtWs.binaryType = 'arraybuffer';
+      rtWs.onopen = () => {
+        const cid = latestStatus?.session?.condition_id || $('conditionSelect').value || 'C1';
+        rtWs.send(JSON.stringify({ type: 'config', condition_id: cid }));
+        $('rtStatus').textContent = `实时对话已连接: ${wsUrl}`;
+      };
+      rtWs.onmessage = (ev) => {
+        try {
+          const d = JSON.parse(ev.data);
+          if (d.type === 'asr') {
+            const conf = (typeof d.confidence === 'number') ? ` conf=${d.confidence.toFixed(2)}` : '';
+            const tag = d.speech_final ? '[SPEECH_FINAL]' : (d.is_final ? '[FINAL]' : '[INTERIM]');
+            $('rtTranscript').value = `${tag}${conf} ${d.text || ''}\n` + $('rtTranscript').value;
+          } else if (d.type === 'llm_token') {
+            $('rtLlmText').value += d.token || '';
+          } else if (d.type === 'assistant_final') {
+            $('rtLlmText').value += `\n\n[FINAL] ${d.text || ''}\n`;
+          } else if (d.type === 'error') {
+            $('rtStatus').textContent = `WS错误: ${d.message || '-'}`;
+          }
+        } catch {}
+      };
+      rtWs.onclose = () => { $('rtStatus').textContent = '实时对话连接已关闭'; };
+
+      rtStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      });
+      rtAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      rtAudioStats = { chunks: 0, bytes: 0, lastTs: Date.now(), sampleRate: rtAudioCtx.sampleRate };
+      const source = rtAudioCtx.createMediaStreamSource(rtStream);
+      rtProcessor = rtAudioCtx.createScriptProcessor(4096, 1, 1);
+      source.connect(rtProcessor);
+      // 不连接 destination，避免把麦克风回放到扬声器导致回授/失真。
+      rtProcessor.onaudioprocess = (e) => {
+        if (!rtWs || rtWs.readyState !== 1) return;
+        const input = e.inputBuffer.getChannelData(0);
+        const ds = downsampleBuffer(input, rtAudioCtx.sampleRate, 16000);
+        const pcm = f32ToPcm16Bytes(ds);
+        rtWs.send(pcm.buffer);
+
+        rtAudioStats.chunks += 1;
+        rtAudioStats.bytes += pcm.byteLength;
+        const now = Date.now();
+        if (now - rtAudioStats.lastTs >= 1000) {
+          const kbps = ((rtAudioStats.bytes * 8) / Math.max(1, (now - rtAudioStats.lastTs)));
+          $('rtStatus').textContent = `实时对话已连接 | ctx_sr=${rtAudioStats.sampleRate}Hz | chunks/s=${rtAudioStats.chunks} | up~${kbps.toFixed(1)}kbps`;
+          rtAudioStats.chunks = 0;
+          rtAudioStats.bytes = 0;
+          rtAudioStats.lastTs = now;
+        }
+      };
+    }
+
+    async function stopRealtimeDialog() {
+      try { if (rtWs && rtWs.readyState === 1) rtWs.send(JSON.stringify({ type: 'end_of_utterance' })); } catch {}
+      try { if (rtWs) rtWs.close(); } catch {}
+      rtWs = null;
+      if (rtProcessor) { try { rtProcessor.disconnect(); } catch {} }
+      if (rtAudioCtx) { try { await rtAudioCtx.close(); } catch {} }
+      if (rtStream) { try { rtStream.getTracks().forEach(t => t.stop()); } catch {} }
+      rtProcessor = null; rtAudioCtx = null; rtStream = null;
+      $('rtStatus').textContent = '实时对话已停止';
+    }
+
+    async function interruptRealtimeDialog() {
+      if (rtWs && rtWs.readyState === 1) {
+        rtWs.send(JSON.stringify({ type: 'interrupt' }));
+        $('rtStatus').textContent = '已发送打断信号';
+      }
     }
 
     async function bootstrap() {
-      try {
+      renderExamples();
+      renderQuickButtons();
+
+      $('conditionSelect').onchange = () => {
+        renderQuickButtons(latestStatus);
+      };
+
+      $('btnStart').onclick = async () => {
+        const participant_id = $('participantId').value.trim();
+        const participant_name = $('participantName').value.trim();
+        const condition_id = $('conditionSelect').value;
+        if (!participant_id || !participant_name || !condition_id) return alert('请填写被试编号、姓名、条件');
+        await api('/api/session/start', 'POST', { participant_id, participant_name, condition_id });
+        $('exportStatus').textContent = '会话已开始';
         await refreshStatus();
-      } catch (e) {
-        $('serviceStatus').textContent = `后端连接失败：${e.message}`;
-      }
+      };
 
-      $('btnStart').onclick = () => onStartSession().catch((e) => alert(`开始失败: ${e.message}`));
-      $('btnEnd').onclick = () => onEndSession().catch((e) => alert(`结束失败: ${e.message}`));
-      $('btnExport').onclick = () => onExport().catch((e) => alert(`导出失败: ${e.message}`));
+      $('btnEnd').onclick = async () => {
+        const d = await api('/api/session/end', 'POST', {});
+        const exp = d.export || {};
+        $('exportStatus').textContent = `会话结束并导出: ${exp.file_path || '-'}`;
+        await refreshStatus();
+      };
 
-      pollTimer = setInterval(() => {
-        refreshStatus().catch((e) => {
-          $('serviceStatus').textContent = `轮询失败：${e.message}`;
-        });
-      }, 1000);
-      window.addEventListener('beforeunload', () => clearInterval(pollTimer));
+      $('btnExport').onclick = async () => {
+        const d = await api('/api/session/export', 'POST', {});
+        $('exportStatus').textContent = `导出成功: ${d.file_path || '-'}`;
+      };
+
+      $('btnRunCurrentStage').onclick = async () => {
+        const stage = latestStatus?.session?.current_stage || 'warmup';
+        const d = await api('/api/stage/run', 'POST', { stage, stop_on_error: false });
+        const rows = d.results || []; const ok = rows.filter(r => r.ok).length;
+        $('stageStatus').textContent = `阶段 ${stage} 执行完成 ${ok}/${rows.length}`;
+        await refreshStatus();
+      };
+
+      $('btnManualSend').onclick = async () => {
+        const command = $('manualCommand').value;
+        const label = $('manualLabel').value.trim() || 'manual_command';
+        let payload = {};
+        try { payload = JSON.parse($('manualPayload').value || '{}'); } catch (e) { return alert(`payload 非法JSON: ${e.message}`); }
+        const d = await api('/api/robot/command', 'POST', { command, label, payload });
+        $('manualResult').textContent = toJson(d.robot_response || d);
+        await refreshStatus();
+      };
+
+      $('btnAsrConfig').onclick = async () => {
+        await saveAsrConfig();
+        await refreshStatus();
+      };
+
+      $('btnAsrStart').onclick = async () => {
+        try {
+          await startAsrCapture();
+        } catch (e) {
+          $('asrStatus').textContent = `启动失败: ${e.message}`;
+        }
+      };
+
+      $('btnAsrStop').onclick = async () => {
+        try {
+          await stopAsrCapture();
+          await refreshStatus();
+        } catch (e) {
+          $('asrStatus').textContent = `停止失败: ${e.message}`;
+        }
+      };
+
+      $('btnRtConfig').onclick = async () => {
+        await saveRealtimeConfig();
+        await refreshStatus();
+      };
+
+      $('btnRtStart').onclick = async () => {
+        try {
+          $('rtTranscript').value = '';
+          $('rtLlmText').value = '';
+          await startRealtimeDialog();
+        } catch (e) {
+          $('rtStatus').textContent = `启动失败: ${e.message}`;
+        }
+      };
+
+      $('btnRtStop').onclick = async () => {
+        try { await stopRealtimeDialog(); } catch (e) { $('rtStatus').textContent = `停止失败: ${e.message}`; }
+      };
+
+      $('btnRtInterrupt').onclick = async () => {
+        try { await interruptRealtimeDialog(); } catch (e) { $('rtStatus').textContent = `打断失败: ${e.message}`; }
+      };
+
+      try { await refreshStatus(); } catch (e) { $('serviceStatus').textContent = `后端连接失败: ${e.message}`; }
+      setInterval(() => refreshStatus().catch((e) => { $('serviceStatus').textContent = `轮询失败: ${e.message}`; }), 1000);
     }
 
     bootstrap();
